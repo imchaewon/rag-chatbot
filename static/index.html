@@ -238,7 +238,7 @@
     }
 
     function handleKeydown(e) {
-      if (e.key === "Enter" && !e.shiftKey) sendMessage();
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) sendMessage();
     }
 
     function appendMessage(role, text) {
