@@ -3,7 +3,8 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_upstage import UpstageEmbeddings
 from langchain_upstage import ChatUpstage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_chroma import Chroma
 
 load_dotenv()
@@ -13,13 +14,14 @@ embeddings = UpstageEmbeddings(model="solar-embedding-1-large")
 vectorstore = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
 retriever = vectorstore.as_retriever()
 
-# 2. 프롬프트
+# 2. 프롬프트 (대화 히스토리 포함)
 prompt = ChatPromptTemplate.from_messages([
     ("system", """당신은 친절한 고객서비스 챗봇입니다.
 아래 문서 내용을 바탕으로만 답변하세요. 문서에 없는 내용은 '확인이 어렵습니다'라고 답하세요.
 
 [참고 문서]
 {context}"""),
+    MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{question}"),
 ])
 
@@ -43,8 +45,10 @@ def select_llm():
 llm = select_llm()
 
 # 4. 대화 루프
+chat_history = []
+
 print("-" * 40)
-print("질문을 입력하세요. (종료: q | 모델변경: /model)")
+print("질문을 입력하세요. (종료: q | 모델변경: /model | 히스토리초기화: /clear)")
 
 while True:
     question = input("고객: ").strip()
@@ -55,6 +59,13 @@ while True:
 
     if question.lower() == "/model":
         llm = select_llm()
+        chat_history = []
+        print("대화 히스토리가 초기화되었습니다.")
+        continue
+
+    if question.lower() == "/clear":
+        chat_history = []
+        print("대화 히스토리가 초기화되었습니다.")
         continue
 
     if not question:
@@ -64,6 +75,15 @@ while True:
     context = "\n".join([doc.page_content for doc in docs])
 
     chain = prompt | llm
-    response = chain.invoke({"context": context, "question": question})
-    print(f"챗봇: {response.content}")
+    response = chain.invoke({
+        "context": context,
+        "question": question,
+        "chat_history": chat_history,
+    })
+
+    answer = response.content
+    print(f"챗봇: {answer}")
     print()
+
+    chat_history.append(HumanMessage(content=question))
+    chat_history.append(AIMessage(content=answer))
