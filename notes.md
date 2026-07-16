@@ -454,8 +454,3 @@ save_messages(req.session_id, req.question, answer)
 ```
 
 서버를 재시작해도 이전 대화 내역이 유지됨.
-
----
-
-## 다음 단계
-- 8단계: 배포
