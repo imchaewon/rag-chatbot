@@ -1,4 +1,4 @@
-# 고객서비스 챗봇 개발 학습 노트
+# MSP 운영 도우미 챗봇 개발 학습 노트
 
 ## 환경 세팅
 
@@ -55,8 +55,8 @@ LLM에 역할을 부여하고 질문 형식을 정의.
 from langchain_core.prompts import ChatPromptTemplate
 
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "당신은 친절한 고객서비스 챗봇입니다."),  # 역할 지정
-    ("human", "{question}"),                            # 사용자 질문
+    ("system", "당신은 MSP 운영팀의 운영 도우미입니다."),  # 역할 지정
+    ("human", "{question}"),                              # 사용자 질문
 ])
 ```
 
@@ -68,7 +68,7 @@ prompt = ChatPromptTemplate.from_messages([
 
 ```python
 chain = prompt | llm
-response = chain.invoke({"question": "환불 정책이 어떻게 되나요?"})
+response = chain.invoke({"question": "Pod가 CrashLoopBackOff일 때 어떻게 해?"})
 ```
 
 실행 흐름:
@@ -90,7 +90,7 @@ LLM은 모르는 정보를 그럴듯하게 지어냄 → RAG로 해결
 
 ```
 현재: 질문 → LLM → 지어낸 답변
-목표: 질문 → 문서 검색 → 검색결과 + 질문 → LLM → 실제 문서 기반 답변
+목표: 질문 → 매뉴얼 검색 → 검색결과 + 질문 → LLM → 실제 매뉴얼 기반 답변
 ```
 
 ---
@@ -170,10 +170,10 @@ LLM은 모르는 정보를 그럴듯하게 지어냄 → RAG로 해결
 기존 코드는 매 질문을 독립적으로 처리해 이전 대화를 기억하지 못함.
 
 ```
-고객: 환불 정책 알려줘
-챗봇: 7일 이내 환불 가능합니다.
+운영자: Pod CrashLoopBackOff 대응 절차 알려줘
+챗봇: 로그 확인 → 이벤트 확인 → OOM이면 limit 상향...
 
-고객: 그럼 배송비는?   ← "그럼"이 뭘 가리키는지 모름
+운영자: 그럼 롤백은 어떻게 해?   ← "그럼"이 뭘 가리키는지 모름
 챗봇: ???
 ```
 
@@ -208,12 +208,12 @@ chat_history.append(AIMessage(content=answer))
 ### 메시지 흐름 (3번째 질문 시)
 
 ```
-[system] 당신은 친절한 고객서비스 챗봇입니다...
-[human]  환불 정책 알려줘          ← 1번째 질문 (히스토리)
-[ai]     7일 이내 환불 가능합니다.  ← 1번째 답변 (히스토리)
-[human]  배송비는 누가 내?         ← 2번째 질문 (히스토리)
-[ai]     고객 부담입니다.          ← 2번째 답변 (히스토리)
-[human]  영업시간은?               ← 현재 질문
+[system] 당신은 MSP 운영팀의 운영 도우미입니다...
+[human]  Pod CrashLoopBackOff 대응 절차 알려줘  ← 1번째 질문 (히스토리)
+[ai]     로그 확인 후 OOM이면 limit 상향...      ← 1번째 답변 (히스토리)
+[human]  그럼 롤백 명령어가 뭐야?               ← 2번째 질문 (히스토리)
+[ai]     kubectl rollout undo deployment/...    ← 2번째 답변 (히스토리)
+[human]  노드 NotReady는 어떻게 해?             ← 현재 질문
 ```
 
 LLM이 전체 대화 흐름을 보고 답변하므로 "그럼", "거기서" 같은 참조 표현도 이해함.
@@ -293,14 +293,14 @@ uvicorn app:app --reload
 ```json
 // POST /chat 요청
 {
-  "question": "환불 정책이 어떻게 되나요?",
+  "question": "Solar Pro API 응답 불가 시 대응 절차 알려줘",
   "session_id": "user_001",
   "model": "groq"
 }
 
 // 응답
 {
-  "answer": "구매 후 30일 이내에 환불이 가능합니다...",
+  "answer": "1) API 서버 Pod 상태 확인 2) GPU 메모리 사용량 확인...",
   "session_id": "user_001"
 }
 ```
@@ -454,3 +454,36 @@ save_messages(req.session_id, req.question, answer)
 ```
 
 서버를 재시작해도 이전 대화 내역이 유지됨.
+
+---
+
+## 도메인 변경: MSP 운영 도우미
+
+### 변경 내용
+
+| 항목 | 변경 전 | 변경 후 |
+|---|---|---|
+| 챗봇 역할 | 고객서비스 챗봇 | MSP 운영 도우미 |
+| 참고 문서 | `docs/company_policy.txt` | `docs/msp_manual.txt` |
+| 시스템 프롬프트 | 환불/배송 정책 안내 | VM/K8s/Solar Pro 운영 매뉴얼 안내 |
+
+### 매뉴얼 구성 (`docs/msp_manual.txt`)
+
+| 섹션 | 내용 |
+|---|---|
+| 2. 모니터링 | CPU/메모리/디스크 임계값, 점검 주기 |
+| 3. VM 운영 | 상태 확인, 재시작 절차, 디스크 증설 |
+| 4. K8s 운영 | Pod 상태 확인, CrashLoopBackOff/NotReady 대응 |
+| 5. Solar Pro | API 불가 대응, GPU OOM 대응, 업데이트 절차 |
+| 6. 장애 대응 | P1~P4 등급 분류, 에스컬레이션 기준 |
+| 7. 보안 | 접근 권한 원칙, 보안 사고 대응 |
+| 8. 정기 점검 | 일간/주간/월간 체크리스트 |
+
+### 문서 변경 시 재처리 필요 절차
+
+```bash
+rm -rf chroma_db          # 기존 벡터DB 삭제
+python ingest.py          # 새 문서로 벡터DB 재생성
+```
+
+임베딩 모델이 다르거나 문서가 바뀌면 반드시 위 과정을 거쳐야 함.
