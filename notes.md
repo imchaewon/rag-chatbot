@@ -164,7 +164,74 @@ LLM은 모르는 정보를 그럴듯하게 지어냄 → RAG로 해결
 
 ---
 
+## 4단계: 멀티턴 대화 (대화 히스토리)
+
+### 문제
+기존 코드는 매 질문을 독립적으로 처리해 이전 대화를 기억하지 못함.
+
+```
+고객: 환불 정책 알려줘
+챗봇: 7일 이내 환불 가능합니다.
+
+고객: 그럼 배송비는?   ← "그럼"이 뭘 가리키는지 모름
+챗봇: ???
+```
+
+### 해결 방법: MessagesPlaceholder
+
+프롬프트 안에 대화 히스토리가 들어갈 자리를 추가하고, 매 대화마다 누적.
+
+```python
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "..."),
+    MessagesPlaceholder(variable_name="chat_history"),  # 히스토리 자리
+    ("human", "{question}"),
+])
+
+chat_history = []
+
+# 대화 루프 안에서
+response = chain.invoke({
+    "context": context,
+    "question": question,
+    "chat_history": chat_history,   # 누적된 히스토리 전달
+})
+
+# 답변 후 히스토리에 추가
+chat_history.append(HumanMessage(content=question))
+chat_history.append(AIMessage(content=answer))
+```
+
+### 메시지 흐름 (3번째 질문 시)
+
+```
+[system] 당신은 친절한 고객서비스 챗봇입니다...
+[human]  환불 정책 알려줘          ← 1번째 질문 (히스토리)
+[ai]     7일 이내 환불 가능합니다.  ← 1번째 답변 (히스토리)
+[human]  배송비는 누가 내?         ← 2번째 질문 (히스토리)
+[ai]     고객 부담입니다.          ← 2번째 답변 (히스토리)
+[human]  영업시간은?               ← 현재 질문
+```
+
+LLM이 전체 대화 흐름을 보고 답변하므로 "그럼", "거기서" 같은 참조 표현도 이해함.
+
+### 추가된 명령어
+
+| 명령어 | 동작 |
+|--------|------|
+| `/clear` | 대화 히스토리만 초기화 |
+| `/model` | 모델 변경 + 히스토리 자동 초기화 |
+
+### 주의점
+히스토리가 길어질수록 LLM에 전달되는 토큰 수 증가 → 응답 느려지고 비용 증가.
+실서비스에서는 최근 N개만 유지하거나 요약하는 전략 필요.
+
+---
+
 ## 다음 단계
-- 4단계: 대화 히스토리 (멀티턴 대화)
 - 5단계: FastAPI 백엔드
-- 6단계: 배포
+- 6단계: 웹 UI
+- 7단계: 배포
