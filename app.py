@@ -8,8 +8,8 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_upstage import UpstageEmbeddings, ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
 from langchain_chroma import Chroma
+from database import init_db, get_history, save_messages, clear_history
 
 load_dotenv()
 
@@ -29,6 +29,7 @@ async def lifespan(app: FastAPI):
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{question}"),
     ])
+    init_db()
     yield
 
 app = FastAPI(title="RAG 챗봇 API", lifespan=lifespan)
@@ -39,8 +40,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 def index():
     return FileResponse("static/index.html")
 
-# 세션별 대화 히스토리 저장 (메모리)
-sessions: dict[str, list] = {}
 
 def get_llm(model: str):
     if model == "gemini":
@@ -71,7 +70,7 @@ def chat(req: ChatRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
 
-    chat_history = sessions.get(req.session_id, [])
+    chat_history = get_history(req.session_id)
 
     docs = retriever.invoke(req.question)
     context = "\n".join([doc.page_content for doc in docs])
@@ -85,16 +84,14 @@ def chat(req: ChatRequest):
     })
 
     answer = response.content
-    chat_history.append(HumanMessage(content=req.question))
-    chat_history.append(AIMessage(content=answer))
-    sessions[req.session_id] = chat_history
+    save_messages(req.session_id, req.question, answer)
 
     return ChatResponse(answer=answer, session_id=req.session_id)
 
 
 @app.post("/clear")
 def clear(req: ClearRequest):
-    sessions.pop(req.session_id, None)
+    clear_history(req.session_id)
     return {"message": f"세션 '{req.session_id}' 히스토리가 초기화되었습니다."}
 
 
