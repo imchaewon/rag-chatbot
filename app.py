@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -30,6 +32,12 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="RAG 챗봇 API", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+def index():
+    return FileResponse("static/index.html")
 
 # 세션별 대화 히스토리 저장 (메모리)
 sessions: dict[str, list] = {}
