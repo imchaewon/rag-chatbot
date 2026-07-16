@@ -373,10 +373,69 @@ sessions[req.session_id] = chat_history  # 누적 저장
 LLM이 "기억"하는 게 아니라 매번 전체 대화 내역을 처음부터 읽는 방식.
 
 ### 주의점
-현재 히스토리는 **서버 메모리**에 저장 → 서버 재시작 시 모든 대화 초기화.
-실서비스라면 Redis나 DB에 저장 필요.
+~~현재 히스토리는 **서버 메모리**에 저장 → 서버 재시작 시 모든 대화 초기화.~~
+→ 7단계에서 SQLite로 해결.
+
+---
+
+## 7단계: SQLite 히스토리 영구 저장
+
+### Redis vs DB 선택 기준
+
+| | Redis | SQLite/DB |
+|---|---|---|
+| 속도 | ~1ms | ~5ms |
+| 영구 저장 | 기본 X | O |
+| 설치 | 별도 서버 필요 | 파일 하나로 끝 |
+
+LLM 응답이 1,000~3,000ms이라 히스토리 조회 5ms 차이는 체감 불가.
+트래픽이 많지 않은 지금 단계에서는 SQLite로 충분.
+
+### DB 스키마
+
+```sql
+CREATE TABLE chat_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT    NOT NULL,
+    role       TEXT    NOT NULL,   -- 'human' | 'ai'
+    content    TEXT    NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+### 파일 구조
+
+```
+database.py   -- DB 연결 및 CRUD 함수 모음
+app.py        -- database.py 함수 호출
+chat_history.db  -- 실제 데이터 저장 파일 (gitignore)
+```
+
+### database.py 핵심 함수
+
+```python
+def init_db():       # 서버 시작 시 테이블 생성
+def get_history():   # 세션 히스토리 조회 → LangChain 메시지 객체 리스트 반환
+def save_messages(): # 질문/답변 한 쌍 저장
+def clear_history(): # 세션 히스토리 삭제
+```
+
+### app.py 변경 전/후
+
+```python
+# 변경 전 (메모리)
+sessions: dict[str, list] = {}
+chat_history = sessions.get(req.session_id, [])
+sessions[req.session_id] = chat_history
+
+# 변경 후 (SQLite)
+chat_history = get_history(req.session_id)
+save_messages(req.session_id, req.question, answer)
+```
+
+서버를 재시작해도 이전 대화 내역이 유지됨.
 
 ---
 
 ## 다음 단계
-- 7단계: 배포
+- 8단계: 배포
