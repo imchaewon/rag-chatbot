@@ -321,6 +321,62 @@ uvicorn app:app --reload   # --reload: 코드 수정 시 자동 재시작
 
 ---
 
+## 6단계: 웹 UI
+
+### 구조
+FastAPI가 `static/index.html`을 직접 서빙. 별도 프론트 서버 불필요.
+
+```python
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+def index():
+    return FileResponse("static/index.html")
+```
+
+브라우저에서 `http://localhost:8000` 접속하면 채팅 UI 표시.
+
+### 세션 관리
+
+브라우저마다 랜덤 `session_id`를 생성해 대화 히스토리를 분리.
+
+```javascript
+// index.html — 탭 열 때 딱 한 번 생성
+const sessionId = "session_" + Math.random().toString(36).slice(2, 9);
+```
+
+```python
+# app.py — 세션별 히스토리를 서버 메모리에 저장
+sessions: dict[str, list] = {}
+
+# 요청마다 해당 세션 히스토리 꺼내서 LLM에 전달
+chat_history = sessions.get(req.session_id, [])
+# ...LLM 호출 후...
+sessions[req.session_id] = chat_history  # 누적 저장
+```
+
+### 채팅 1회의 실제 흐름
+
+```
+브라우저 → POST /chat { question, session_id, model }
+               ↓
+          서버: sessions에서 이전 대화 꺼내기
+               ↓
+          벡터DB 검색 (관련 문서)
+               ↓
+          LLM API 호출 (히스토리 + 문서 + 질문 통째로 전송)
+               ↓
+          브라우저 ← { answer, session_id }
+```
+
+메시지 1개 = API 요청 1회. ChatGPT도 동일한 구조.
+LLM이 "기억"하는 게 아니라 매번 전체 대화 내역을 처음부터 읽는 방식.
+
+### 주의점
+현재 히스토리는 **서버 메모리**에 저장 → 서버 재시작 시 모든 대화 초기화.
+실서비스라면 Redis나 DB에 저장 필요.
+
+---
+
 ## 다음 단계
-- 6단계: 웹 UI
 - 7단계: 배포
