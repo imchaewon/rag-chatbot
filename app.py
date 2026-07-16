@@ -21,10 +21,11 @@ async def lifespan(app: FastAPI):
     vectorstore = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
     retriever = vectorstore.as_retriever()
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """당신은 친절한 고객서비스 챗봇입니다.
-아래 문서 내용을 바탕으로만 답변하세요. 문서에 없는 내용은 '확인이 어렵습니다'라고 답하세요.
+        ("system", """당신은 MSP 운영팀의 운영 도우미입니다.
+VM, Kubernetes, Solar Pro 등 운영 관련 질문에 답변합니다.
+아래 매뉴얼 내용을 바탕으로만 답변하세요. 매뉴얼에 없는 내용은 '매뉴얼에서 확인이 어렵습니다'라고 답하세요.
 
-[참고 문서]
+[참고 매뉴얼]
 {context}"""),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{question}"),

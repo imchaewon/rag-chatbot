@@ -7,7 +7,7 @@ from langchain_upstage import UpstageEmbeddings
 load_dotenv()
 
 # 1. 문서 로딩
-loader = TextLoader("docs/company_policy.txt", encoding="utf-8")
+loader = TextLoader("docs/msp_manual.txt", encoding="utf-8")
 documents = loader.load()
 
 # 2. 문서 분할
