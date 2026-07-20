@@ -843,6 +843,55 @@ def stats():
 
 ---
 
+## 추천 검색어
+
+### 동작 방식
+
+페이지 로드 시 `/suggestions` 호출 → 입력창 위에 칩 형태로 표시.
+클릭하면 해당 질문이 입력창에 채워지고 바로 전송.
+첫 메시지 전송 후 칩 영역은 숨겨짐.
+
+### 추천 순서
+
+1. 통계 기반 자주 묻는 질문 최대 3개 (실사용 데이터 반영)
+2. 사전 정의 질문으로 5개까지 채움
+
+```python
+PREDEFINED_SUGGESTIONS = [
+    "MSP 서비스 제공 범위가 어떻게 되나요?",
+    "PPP 네트워크 장애 시 확인 절차는?",
+    "방화벽 정책 신청 방법을 알려주세요",
+    "KTcloud 계정 접속 절차는?",
+    "Kubernetes 플랫폼 지원 내용은?",
+]
+
+@app.get("/suggestions")
+def suggestions():
+    top = [s["question"] for s in get_question_stats(limit=3)]
+    merged = list(dict.fromkeys(top + PREDEFINED_SUGGESTIONS))[:5]
+    return {"suggestions": merged}
+```
+
+### 관련성 필터링
+
+통계 기반 질문 중 거절되거나 매뉴얼에서 확인 불가 판정을 받은 질문은 제외.
+LLM 호출 없이 DB에 저장된 AI 답변 텍스트를 SQL로 필터링.
+
+```sql
+SELECT h1.content, COUNT(*) as count
+FROM chat_history h1
+JOIN chat_history h2 ON h2.id = h1.id + 1 AND h2.role = 'ai'
+WHERE h1.role = 'human'
+  AND h2.content NOT LIKE '%MSP 운영과 관련 없는 질문%'
+  AND h2.content NOT LIKE '%매뉴얼에서 확인이 어렵습니다%'
+GROUP BY h1.content
+ORDER BY count DESC
+```
+
+질문(h1)과 바로 다음 AI 답변(h2)을 JOIN해서, 부정적 답변이 달린 질문을 추천에서 제외.
+
+---
+
 ## 스트리밍 중단 버튼
 
 ### 구현 방식
