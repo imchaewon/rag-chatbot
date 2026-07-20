@@ -892,6 +892,79 @@ ORDER BY count DESC
 
 ---
 
+## 멀티 세션 (ChatGPT 스타일 사이드바)
+
+### 목적
+
+하나의 챗봇에서 여러 주제의 대화를 독립적으로 관리.
+ChatGPT처럼 왼쪽 사이드바에서 대화 목록을 보고 선택해 이어서 대화 가능.
+
+### DB 추가 함수 — database.py
+
+```python
+def get_sessions() -> list:
+    # 세션 목록 조회: 첫 질문을 제목으로, 최신 활동순 정렬
+    # SQL 서브쿼리로 각 세션의 첫 human 메시지를 제목으로 추출
+
+def get_full_history(session_id: str) -> list:
+    # 특정 세션의 전체 대화 내역 반환 (role + content 딕셔너리 리스트)
+```
+
+### 백엔드 추가 엔드포인트 — app.py
+
+```python
+GET /sessions               → 전체 세션 목록 (session_id, title, last_active)
+GET /sessions/{session_id}  → 특정 세션의 전체 히스토리
+```
+
+### 프론트엔드 구조 변경 — index.html
+
+**레이아웃**
+```
+.app-container (900px)
+├── .sidebar (250px, 다크 #1a1a2e)
+│   ├── "+ 새 대화" 버튼
+│   └── 세션 목록 (클릭 시 해당 세션으로 전환)
+└── .chat-container
+    └── 기존 채팅 UI
+```
+
+**핵심 JS 로직**
+
+```javascript
+let currentSessionId = "session_" + Math.random().toString(36).slice(2, 9);
+
+// 세션 목록 불러와서 사이드바 렌더링
+async function loadSessionList() { ... }
+
+// 세션 선택 시 히스토리 불러와서 채팅창 복원
+async function selectSession(sessionId) {
+    currentSessionId = sessionId;
+    const res = await fetch(`/sessions/${sessionId}`);
+    const data = await res.json();
+    data.history.forEach(msg => appendMessage(...));
+}
+
+// 새 대화 시작
+function newChat() {
+    currentSessionId = "session_" + Math.random().toString(36).slice(2, 9);
+    // 채팅창 초기화 + 추천 검색어 다시 표시
+}
+
+// 메시지 전송 완료 후 사이드바 갱신
+async function sendMessage() {
+    await streamMessage(...);
+    loadSessionList();  // ← 새 세션이 사이드바에 나타남
+}
+```
+
+### 세션 제목 결정 방식
+
+별도 제목 입력 없이 **첫 번째 질문 텍스트**를 제목으로 사용.
+DB SQL 서브쿼리로 `role = 'human'` 중 `id ASC LIMIT 1`로 추출.
+
+---
+
 ## 스트리밍 중단 버튼
 
 ### 구현 방식
