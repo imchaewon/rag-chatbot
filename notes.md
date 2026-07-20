@@ -1034,6 +1034,49 @@ yield f"data: {json.dumps({'type': 'done', ...})}\n\n"
 
 ---
 
+## API 오류 처리
+
+### 문제
+
+Groq 등 외부 API는 무료 티어에서 일일 토큰 한도(TPD)가 있어 초과 시 429 오류 발생.
+기존 코드는 `event_generator()` 안에서 예외가 터지면 서버 에러 로그만 남고 클라이언트는 응답 없이 끊김.
+
+### 해결 방법
+
+`event_generator()` 전체를 try/except로 감싸고, 오류 발생 시 `type: error` SSE 이벤트 전송.
+
+### 백엔드 — app.py
+
+```python
+def _api_error_message(e: Exception) -> str:
+    msg = str(e)
+    if "429" in msg or "rate_limit" in msg.lower():
+        return "토큰 사용량 한도를 초과했습니다. 잠시 후 다시 시도하거나 다른 모델을 선택해주세요."
+    if "401" in msg or "authentication" in msg.lower():
+        return "API 인증에 실패했습니다. API 키를 확인해주세요."
+    return "오류가 발생했습니다. 다시 시도해주세요."
+
+# event_generator() 안
+try:
+    # ... 스트리밍 로직 ...
+except Exception as e:
+    yield f"data: {json.dumps({'type': 'error', 'content': _api_error_message(e)})}\n\n"
+```
+
+`/chat-stream`과 `/chat-graph-stream` 양쪽에 동일하게 적용.
+
+### 프론트엔드 — index.html
+
+```javascript
+if (data.type === "error") {
+    bubble.innerHTML = `<span style="color:#ea4335">⚠️ ${data.content}</span>`;
+}
+```
+
+채팅 버블에 빨간색으로 오류 메시지 표시.
+
+---
+
 ## 스트리밍 중단 버튼
 
 ### 구현 방식
