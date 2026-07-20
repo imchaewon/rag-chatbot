@@ -202,10 +202,12 @@ def chat_stream(req: ChatRequest):
                     yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
             save_messages(req.session_id, req.question, full_answer)
-            if is_first:
-                title = generate_session_title(req.question, llm)
-                save_session_title(req.session_id, title)
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
+            if is_first:
+                try:
+                    save_session_title(req.session_id, generate_session_title(req.question, llm))
+                except Exception:
+                    pass
 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': _api_error_message(e)}, ensure_ascii=False)}\n\n"
@@ -269,10 +271,13 @@ async def chat_graph_stream(req: ChatRequest):
                         yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
 
             await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
-            if is_first:
-                title = await asyncio.to_thread(generate_session_title, req.question, llm)
-                await asyncio.to_thread(save_session_title, req.session_id, title)
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
+            if is_first:
+                try:
+                    title = await asyncio.to_thread(generate_session_title, req.question, llm)
+                    await asyncio.to_thread(save_session_title, req.session_id, title)
+                except Exception:
+                    pass
 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'content': _api_error_message(e)}, ensure_ascii=False)}\n\n"
