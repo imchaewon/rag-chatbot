@@ -14,7 +14,7 @@ from langchain_upstage import UpstageEmbeddings, ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
-from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history
+from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history, delete_session
 from graph import build_graph
 
 load_dotenv()
@@ -261,6 +261,12 @@ def list_sessions():
 @app.get("/sessions/{session_id}")
 def session_history(session_id: str):
     return {"history": get_full_history(session_id)}
+
+
+@app.delete("/sessions/{session_id}")
+def remove_session(session_id: str):
+    delete_session(session_id)
+    return {"message": f"세션 '{session_id}'이 삭제되었습니다."}
 
 
 @app.get("/stats")

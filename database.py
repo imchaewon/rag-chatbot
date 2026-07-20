@@ -46,6 +46,11 @@ def clear_history(session_id: str):
         conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
 
 
+def delete_session(session_id: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
+
+
 def get_sessions() -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""

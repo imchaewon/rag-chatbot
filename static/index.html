@@ -72,13 +72,33 @@
       cursor: pointer;
       color: #aaa;
       font-size: 13px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 6px;
       transition: background 0.15s, color 0.15s;
     }
     .session-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
     .session-item.active { background: rgba(255,255,255,0.12); color: #fff; }
+    .session-title {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .btn-delete-session {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      color: transparent;
+      font-size: 13px;
+      cursor: pointer;
+      padding: 1px 3px;
+      border-radius: 4px;
+      line-height: 1;
+      transition: color 0.15s, background 0.15s;
+    }
+    .session-item:hover .btn-delete-session { color: #888; }
+    .btn-delete-session:hover { color: #fff !important; background: rgba(255,255,255,0.15); }
 
     .session-empty {
       padding: 20px 10px;
@@ -478,13 +498,27 @@
       }
 
       list.innerHTML = data.sessions.map(s => {
-        const title = s.title.length > 26 ? s.title.slice(0, 26) + "…" : s.title;
+        const title = s.title.length > 22 ? s.title.slice(0, 22) + "…" : s.title;
         const active = s.session_id === currentSessionId ? " active" : "";
-        return `<div class="session-item${active}" data-sid="${s.session_id}">${title}</div>`;
+        return `
+          <div class="session-item${active}" data-sid="${s.session_id}">
+            <span class="session-title">${title}</span>
+            <button class="btn-delete-session" data-sid="${s.session_id}" title="삭제">✕</button>
+          </div>`;
       }).join("");
 
       list.querySelectorAll(".session-item").forEach(el => {
-        el.addEventListener("click", () => selectSession(el.dataset.sid));
+        el.addEventListener("click", (e) => {
+          if (e.target.classList.contains("btn-delete-session")) return;
+          selectSession(el.dataset.sid);
+        });
+      });
+
+      list.querySelectorAll(".btn-delete-session").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deleteSession(btn.dataset.sid);
+        });
       });
     }
 
@@ -676,6 +710,17 @@
       if (e.target === document.getElementById("statsModal")) {
         document.getElementById("statsModal").style.display = "none";
       }
+    }
+
+    // ── 세션 삭제 ─────────────────────────────────────────────────────
+
+    async function deleteSession(sessionId) {
+      await fetch(`/sessions/${sessionId}`, { method: "DELETE" });
+
+      if (sessionId === currentSessionId) {
+        newChat();
+      }
+      loadSessionList();
     }
 
     // ── 초기화 ───────────────────────────────────────────────────────
