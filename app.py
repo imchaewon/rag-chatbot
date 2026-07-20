@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import warnings
 from contextlib import asynccontextmanager
@@ -223,6 +224,7 @@ def chat_stream(req: ChatRequest):
                     pass
 
         except Exception as e:
+            logging.error("스트리밍 중 오류 발생 [session=%s model=%s]: %s", req.session_id, req.model, e)
             yield f"data: {json.dumps({'type': 'error', 'content': _api_error_message(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -293,6 +295,7 @@ async def chat_graph_stream(req: ChatRequest):
                     pass
 
         except Exception as e:
+            logging.error("스트리밍 중 오류 발생 [session=%s model=%s]: %s", req.session_id, req.model, e)
             yield f"data: {json.dumps({'type': 'error', 'content': _api_error_message(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
