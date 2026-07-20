@@ -49,10 +49,13 @@ def clear_history(session_id: str):
 def get_question_stats(limit: int = 20) -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""
-            SELECT content, COUNT(*) as count
-            FROM chat_history
-            WHERE role = 'human'
-            GROUP BY content
+            SELECT h1.content, COUNT(*) as count
+            FROM chat_history h1
+            JOIN chat_history h2 ON h2.id = h1.id + 1 AND h2.role = 'ai'
+            WHERE h1.role = 'human'
+              AND h2.content NOT LIKE '%MSP 운영과 관련 없는 질문%'
+              AND h2.content NOT LIKE '%매뉴얼에서 확인이 어렵습니다%'
+            GROUP BY h1.content
             ORDER BY count DESC
             LIMIT ?
         """, (limit,)).fetchall()

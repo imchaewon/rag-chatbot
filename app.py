@@ -258,6 +258,22 @@ def stats():
     return {"questions": get_question_stats()}
 
 
+PREDEFINED_SUGGESTIONS = [
+    "MSP 서비스 제공 범위가 어떻게 되나요?",
+    "PPP 네트워크 장애 시 확인 절차는?",
+    "방화벽 정책 신청 방법을 알려주세요",
+    "KTcloud 계정 접속 절차는?",
+    "Kubernetes 플랫폼 지원 내용은?",
+]
+
+
+@app.get("/suggestions")
+def suggestions():
+    top = [s["question"] for s in get_question_stats(limit=3)]
+    merged = list(dict.fromkeys(top + PREDEFINED_SUGGESTIONS))[:5]
+    return {"suggestions": merged}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
