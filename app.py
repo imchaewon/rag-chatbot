@@ -52,6 +52,8 @@ def get_llm(model: str):
         return ChatUpstage(model="solar-pro")
     elif model == "llama":
         return ChatOllama(model="llama3.1:8b")
+    elif model == "qwen3b":
+        return ChatOllama(model="qwen2.5:3b")
     else:
         return ChatOllama(model="qwen2.5:7b")
 
