@@ -803,6 +803,46 @@ return {**state, "answer": "MSP 운영과 관련 없는 질문입니다...", "so
 
 ---
 
+## 질문 로깅 및 통계
+
+### 목적
+
+어떤 질문이 자주 들어오는지 파악해 매뉴얼 보완 포인트를 식별.
+별도 테이블 없이 기존 `chat_history` 테이블을 그대로 활용.
+
+### 백엔드 — database.py
+
+```python
+def get_question_stats(limit: int = 20) -> list:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("""
+            SELECT content, COUNT(*) as count
+            FROM chat_history
+            WHERE role = 'human'
+            GROUP BY content
+            ORDER BY count DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+    return [{"question": row[0], "count": row[1]} for row in rows]
+```
+
+`role = 'human'` 행만 골라 동일 질문 텍스트를 `GROUP BY`로 묶어 빈도 집계.
+
+### 백엔드 — GET /stats 엔드포인트
+
+```python
+@app.get("/stats")
+def stats():
+    return {"questions": get_question_stats()}
+```
+
+### 프론트엔드
+
+헤더의 📊 버튼 클릭 → `/stats` 호출 → 모달에 TOP 20 질문과 빈도 표시.
+모달 바깥 클릭 또는 ✕ 버튼으로 닫기.
+
+---
+
 ## 스트리밍 중단 버튼
 
 ### 구현 방식
