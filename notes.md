@@ -486,29 +486,83 @@ save_messages(req.session_id, req.question, answer)
 | 구조 | 단순 체인 (순서대로 실행) | 노드 + 엣지 (조건 분기, 루프 가능) |
 | 적합한 경우 | 질문 → 검색 → 답변 같은 단순 흐름 | 판단, 반복, 여러 경로가 필요한 복잡한 흐름 |
 
-### 현재 구조의 한계
+### LangGraph 이전의 한계
 
 지금은 질문이 뭐든 무조건 벡터DB 검색 → LLM 호출.
 "안녕하세요", "점심 뭐 먹지" 같은 무관한 질문도 API 크레딧 소모.
+관련 없는 질문에 대한 응답은 시스템 프롬프트("매뉴얼에 없으면 모른다고 해")에 LLM 양심을 맡기는 방식.
 
 ```
-질문 → 벡터DB 검색 → LLM → 답변   (항상 이 경로)
+질문 → 벡터DB 검색 → LLM → 답변   (항상 이 경로, 모델에 따라 지시 무시 가능)
 ```
 
-### LangGraph로 개선 가능한 흐름
+### LangGraph 도입 후 흐름
 
 ```
 질문
  ↓
-[관련성 판단 노드] ← "이 질문이 MSP 운영 매뉴얼과 관련 있나?" 판단
- ├── 관련 있음 → 벡터DB 검색 → LLM → 답변
- └── 관련 없음 → "매뉴얼에서 확인이 어렵습니다" 즉시 반환
+[관련성 판단 노드] ← LLM이 "MSP 운영과 관련 있나?" 판단
+ ├── yes → 벡터DB 검색 → LLM → 답변
+ └── no  → "MSP 운영과 관련 없는 질문입니다" 즉시 반환 (검색 skip)
 ```
 
-### 현재 규모에서의 판단
+판단 주체는 동일하게 LLM이지만, **판단을 구조적으로 분리**해서 흐름을 제어할 수 있게 됨.
+관련 없으면 벡터DB 검색을 아예 안 함 → 비용/시간 절약.
 
-관련성 판단 자체도 LLM 호출이 한 번 더 일어나서 오히려 비용이 더 나올 수 있음.
-지금 단계에서 도입 실익은 크지 않음.
+### 구현 — GraphState (노드 간 공유 데이터)
+
+```python
+class GraphState(TypedDict):
+    question: str
+    context: str
+    chat_history: list
+    answer: str
+    relevant: str  # "yes" | "no"
+```
+
+모든 노드는 이 딕셔너리를 받아서 수정 후 반환. `{**state, "relevant": "yes"}` 형태로 나머지는 그대로 두고 필요한 키만 업데이트.
+
+### 구현 — 노드와 엣지
+
+```python
+graph = StateGraph(GraphState)
+
+graph.add_node("check_relevance", check_relevance)   # 노드 등록
+graph.add_node("retrieve_and_answer", retrieve_and_answer)
+graph.add_node("reject", reject)
+
+graph.set_entry_point("check_relevance")             # 시작점
+graph.add_conditional_edges("check_relevance", route) # 조건 분기
+graph.add_edge("retrieve_and_answer", END)
+graph.add_edge("reject", END)
+
+compiled_graph = graph.compile()
+```
+
+### 실제 호출 — app.py `/chat-graph-stream` 엔드포인트
+
+`graph.astream_events()`로 이벤트를 하나씩 받아 SSE로 스트리밍.
+
+```python
+async for event in graph.astream_events(initial_state, version="v2"):
+    if event["event"] == "on_chat_model_stream":
+        node = event.get("metadata", {}).get("langgraph_node", "")
+        if node == "retrieve_and_answer":   # 답변 노드 토큰만 전송
+            token = event["data"]["chunk"].content
+            yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+    elif event["event"] == "on_chain_end":
+        node = event.get("metadata", {}).get("langgraph_node", "")
+        if node == "reject":                # 거절 메시지 한 번에 전송
+            full_answer = event["data"]["output"]["answer"]
+            yield f"data: {json.dumps({'type': 'token', 'content': full_answer})}\n\n"
+```
+
+`check_relevance` 노드도 LLM을 호출하므로 `langgraph_node` 필터로 `retrieve_and_answer` 토큰만 골라냄.
+
+### LangGraph 모드의 한계
+
+- 관련성 판단도 LLM이 하므로 소형 모델(3B)은 신뢰도 낮음 → 7B 이상 권장
+- 사내 고유 용어(PPP 네트워크 등)는 일반 LLM이 IT 관련으로 인식 못할 수 있음
 
 ### LangGraph가 진짜 유용해지는 시점
 
@@ -517,3 +571,136 @@ save_messages(req.session_id, req.question, answer)
 | 실제 액션 수행 | "VM 재시작해줘" → kubectl 명령 직접 실행하는 에이전트 |
 | 자동 재검색 루프 | 답변 품질이 낮으면 자동으로 다시 검색 후 재답변 |
 | 멀티스텝 워크플로우 | 여러 매뉴얼을 단계적으로 검색해 종합 답변 생성 |
+
+---
+
+## 대화 히스토리 압축
+
+### 문제
+
+히스토리를 누적해서 LLM에 전달하면 대화가 길어질수록 토큰이 폭발적으로 증가.
+→ 응답 느려짐, 비용 증가, Groq 같은 무료 티어는 Rate Limit 429 오류 발생.
+
+### 해결 방법: Window + Summary
+
+최근 N턴은 그대로 유지하고, 그 이전 대화는 LLM이 요약해서 압축.
+
+```
+DB (원본 전체 보존)
+1턴: 질문A / 답변A
+2턴: 질문B / 답변B    ← 오래된 대화
+3턴: 질문C / 답변C
+4턴: 질문D / 답변D
+5턴: 질문E / 답변E    ← 최근 5턴 유지
+6턴: 질문F / 답변F
+             ↓
+LLM에 전달되는 것 (6턴 질문 시)
+[SystemMessage: "1~2턴 요약: A와 B에 대해 대화함"]
+3턴~5턴 원본
+현재 질문F
+```
+
+### 핵심 코드
+
+```python
+MAX_HISTORY_TURNS = 5  # 최근 5턴 초과 시 압축
+
+def compress_history(history: list, llm) -> list:
+    if len(history) <= MAX_HISTORY_TURNS * 2:
+        return history  # 한도 이하면 그냥 반환
+
+    old = history[:-(MAX_HISTORY_TURNS * 2)]     # 오래된 부분
+    recent = history[-(MAX_HISTORY_TURNS * 2):]  # 최근 부분
+
+    # 오래된 대화를 LLM으로 요약
+    summary = (summary_prompt | llm).invoke({오래된 대화 텍스트}).content
+
+    return [SystemMessage(content=f"[이전 대화 요약]\n{summary}")] + recent
+```
+
+### 중요한 점
+
+**압축본은 DB에 저장하지 않는다.** DB에는 원본 전체가 보존되고, LLM에 넘기기 직전에만 압축.
+→ `MAX_HISTORY_TURNS` 값을 나중에 바꿔도 원본 데이터 유지됨.
+
+---
+
+## SSE 스트리밍
+
+### 문제
+
+기존 구조는 일반 HTTP 요청/응답 방식 → 서버가 전부 처리 완료 후 한 번에 반환.
+- 답변이 늦게 뜸 (첫 글자까지 LLM 전체 생성 시간 기다림)
+- 압축 중인지 등 중간 상태를 알 수 없음
+
+### SSE(Server-Sent Events)란
+
+서버 → 클라이언트 단방향 실시간 전송 프로토콜.
+채팅봇은 "질문 보내고 → 답변 받는" 구조라 단방향 SSE로 충분.
+(WebSocket은 서버가 먼저 데이터를 push해야 하는 경우에 사용)
+
+```
+기존: 클라이언트 → 요청 → [서버 5초 처리] → 응답 (한 번에)
+
+SSE:  클라이언트 → 요청 → 서버
+                          ↓ "이전 대화를 압축하는 중..."  (즉시)
+                          ↓ "K"                          (0.3초)
+                          ↓ "8"
+                          ↓ "s"
+                          ↓ "는 ..."
+```
+
+총 처리 시간은 동일. **첫 글자가 빨리 뜨는 것**이 핵심 (체감 속도 향상).
+
+### LLM이 스트리밍 가능한 이유
+
+LLM은 "생각 후 출력"이 아니라 **다음 토큰 하나 예측 → 출력 → 반복** 방식.
+앞에서부터 순서대로 확정되며 나오므로 첫 글자가 나중에 바뀔 일이 없음.
+(추론 모델 o1, DeepSeek R1은 `<think>` 태그로 먼저 탐색 후 출력 → 스트리밍 체감 효과 낮음)
+
+### 백엔드 구현 — FastAPI StreamingResponse
+
+```python
+@app.post("/chat-stream")
+def chat_stream(req: ChatRequest):
+    def event_generator():
+        # 압축 필요 시 상태 먼저 전송
+        if len(history) > MAX_HISTORY_TURNS * 2:
+            yield f"data: {json.dumps({'type': 'status', 'content': '압축중...'})}\n\n"
+            chat_history = compress_history(history, llm)
+
+        # LLM 토큰 단위 스트리밍
+        for chunk in (prompt | llm).stream({...}):
+            yield f"data: {json.dumps({'type': 'token', 'content': chunk.content})}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+```
+
+SSE 메시지 형식: `data: <내용>\n\n` (개행 2개가 메시지 구분자)
+
+### 프론트엔드 구현 — fetch + ReadableStream
+
+EventSource는 GET만 지원하므로, POST가 필요한 경우 fetch로 스트림 직접 읽기.
+
+```javascript
+const res = await fetch("/chat-stream", { method: "POST", ... });
+const reader = res.body.getReader();
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // SSE 파싱 후 토큰을 bubble에 append
+}
+```
+
+### 엔드포인트 정리
+
+| 엔드포인트 | 방식 | 용도 |
+|---|---|---|
+| `POST /chat` | 일반 HTTP | (레거시) |
+| `POST /chat-stream` | SSE 스트리밍 | 일반 모드 |
+| `POST /chat-graph` | 일반 HTTP | (레거시) |
+| `POST /chat-graph-stream` | SSE 스트리밍 | LangGraph 모드 |
+| `POST /clear` | 일반 HTTP | 히스토리 초기화 |

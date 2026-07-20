@@ -287,14 +287,28 @@
 
       const model = document.getElementById("modelSelect").value;
       const graphMode = document.getElementById("graphMode").checked;
-      const endpoint = graphMode ? "/chat-graph" : "/chat";
       const sendBtn = document.getElementById("sendBtn");
 
       input.value = "";
       sendBtn.disabled = true;
-
       appendMessage("user", question);
-      showTyping();
+
+      const endpoint = graphMode ? "/chat-graph-stream" : "/chat-stream";
+      await streamMessage(question, model, endpoint);
+      sendBtn.disabled = false;
+      input.focus();
+    }
+
+    async function streamMessage(question, model, endpoint = "/chat-stream") {
+      const messages = document.getElementById("messages");
+
+      const div = document.createElement("div");
+      div.className = "message bot";
+      div.innerHTML = `<div class="bubble"></div><div class="time">${now()}</div>`;
+      messages.appendChild(div);
+      const bubble = div.querySelector(".bubble");
+
+      let fullText = "";
 
       try {
         const res = await fetch(endpoint, {
@@ -303,20 +317,33 @@
           body: JSON.stringify({ question, session_id: sessionId, model }),
         });
 
-        const data = await res.json();
-        removeTyping();
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-        if (res.ok) {
-          appendMessage("bot", data.answer);
-        } else {
-          appendMessage("bot", "오류가 발생했습니다: " + data.detail);
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            if (!part.startsWith("data: ")) continue;
+            const data = JSON.parse(part.slice(6));
+
+            if (data.type === "status") {
+              bubble.innerHTML = `<em style="color:#999">${data.content}</em>`;
+            } else if (data.type === "token") {
+              fullText += data.content;
+              bubble.innerHTML = fullText.replace(/\n/g, "<br>");
+              messages.scrollTop = messages.scrollHeight;
+            }
+          }
         }
       } catch (e) {
-        removeTyping();
-        appendMessage("bot", "서버에 연결할 수 없습니다.");
-      } finally {
-        sendBtn.disabled = false;
-        input.focus();
+        bubble.textContent = "서버에 연결할 수 없습니다.";
       }
     }
 

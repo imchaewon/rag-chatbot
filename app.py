@@ -1,7 +1,9 @@
+import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+import json
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from langchain_ollama import ChatOllama
@@ -9,6 +11,7 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_upstage import UpstageEmbeddings, ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
 from database import init_db, get_history, save_messages, clear_history
 from graph import build_graph
@@ -43,6 +46,29 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 def index():
     return FileResponse("static/index.html")
+
+
+MAX_HISTORY_TURNS = 5  # 최근 5턴(메시지 10개) 초과 시 압축
+
+
+def compress_history(history: list, llm) -> list:
+    if len(history) <= MAX_HISTORY_TURNS * 2:
+        return history
+
+    old = history[:-(MAX_HISTORY_TURNS * 2)]
+    recent = history[-(MAX_HISTORY_TURNS * 2):]
+
+    old_text = "\n".join([
+        f"{'사용자' if isinstance(m, HumanMessage) else 'AI'}: {m.content}"
+        for m in old
+    ])
+    summary_prompt = ChatPromptTemplate.from_messages([
+        ("system", "다음 대화를 3~5문장으로 핵심만 요약하세요."),
+        ("human", old_text),
+    ])
+    summary = (summary_prompt | llm).invoke({}).content
+
+    return [SystemMessage(content=f"[이전 대화 요약]\n{summary}")] + recent
 
 
 def get_llm(model: str):
@@ -80,12 +106,11 @@ def chat(req: ChatRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
 
-    chat_history = get_history(req.session_id)
+    llm = get_llm(req.model)
+    chat_history = compress_history(get_history(req.session_id), llm)
 
     docs = retriever.invoke(req.question)
     context = "\n".join([doc.page_content for doc in docs])
-
-    llm = get_llm(req.model)
     chain = prompt | llm
     response = chain.invoke({
         "context": context,
@@ -104,8 +129,8 @@ def chat_graph(req: ChatRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
 
-    chat_history = get_history(req.session_id)
     llm = get_llm(req.model)
+    chat_history = compress_history(get_history(req.session_id), llm)
     graph = build_graph(retriever, llm)
 
     result = graph.invoke({
@@ -120,6 +145,99 @@ def chat_graph(req: ChatRequest):
     save_messages(req.session_id, req.question, answer)
 
     return ChatResponse(answer=answer, session_id=req.session_id)
+
+
+@app.post("/chat-stream")
+def chat_stream(req: ChatRequest):
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
+
+    def event_generator():
+        llm = get_llm(req.model)
+        history = get_history(req.session_id)
+
+        if len(history) > MAX_HISTORY_TURNS * 2:
+            yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
+            chat_history = compress_history(history, llm)
+        else:
+            chat_history = history
+
+        docs = retriever.invoke(req.question)
+        context = "\n".join([doc.page_content for doc in docs])
+
+        full_answer = ""
+        for chunk in (prompt | llm).stream({
+            "context": context,
+            "question": req.question,
+            "chat_history": chat_history,
+        }):
+            token = chunk.content
+            if token:
+                full_answer += token
+                yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
+
+        save_messages(req.session_id, req.question, full_answer)
+        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/chat-graph-stream")
+async def chat_graph_stream(req: ChatRequest):
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
+
+    async def event_generator():
+        llm = get_llm(req.model)
+        history = await asyncio.to_thread(get_history, req.session_id)
+
+        if len(history) > MAX_HISTORY_TURNS * 2:
+            yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
+            chat_history = await asyncio.to_thread(compress_history, history, llm)
+        else:
+            chat_history = history
+
+        graph = build_graph(retriever, llm)
+        initial_state = {
+            "question": req.question,
+            "context": "",
+            "chat_history": chat_history,
+            "answer": "",
+            "relevant": "",
+        }
+
+        full_answer = ""
+
+        async for event in graph.astream_events(initial_state, version="v2"):
+            kind = event["event"]
+
+            if kind == "on_chat_model_stream":
+                node = event.get("metadata", {}).get("langgraph_node", "")
+                if node == "retrieve_and_answer":
+                    token = event["data"]["chunk"].content
+                    if token:
+                        full_answer += token
+                        yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
+
+            elif kind == "on_chain_end":
+                node = event.get("metadata", {}).get("langgraph_node", "")
+                if node == "reject":
+                    output = event["data"].get("output", {})
+                    full_answer = output.get("answer", "")
+                    yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
+
+        await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
+        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/clear")
