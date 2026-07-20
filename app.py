@@ -105,8 +105,7 @@ def generate_session_title(question: str, llm) -> str:
 출력 규칙:
 - 제목 텍스트만 출력, 다른 말 절대 금지
 - 10글자 이내
-- 인사말·잡담이면 "일반 대화" 출력
-예시: "VM 재시작 절차", "K8s Pod 오류", "방화벽 정책 신청"
+예시: "VM 재시작 절차", "K8s Pod 오류", "인사말", "방화벽 정책 신청"
 질문:"""),
         ("human", "{question}"),
     ])
