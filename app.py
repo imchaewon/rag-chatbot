@@ -14,7 +14,7 @@ from langchain_upstage import UpstageEmbeddings, ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
-from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history, delete_session
+from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title
 from graph import build_graph
 
 load_dotenv()
@@ -87,6 +87,18 @@ def get_llm(model: str):
         return ChatOllama(model="qwen2.5:7b")
 
 
+def generate_session_title(question: str, llm) -> str:
+    title_prompt = ChatPromptTemplate.from_messages([
+        ("system", """사용자 질문을 채팅 목록에 표시할 짧은 제목으로 바꿔주세요.
+- 15글자 이내
+- 핵심 내용 위주
+- 제목만 출력, 따옴표 없음"""),
+        ("human", "{question}"),
+    ])
+    result = (title_prompt | llm).invoke({"question": question})
+    return result.content.strip()[:20]
+
+
 class ChatRequest(BaseModel):
     question: str
     session_id: str = "default"
@@ -156,6 +168,7 @@ def chat_stream(req: ChatRequest):
     def event_generator():
         llm = get_llm(req.model)
         history = get_history(req.session_id)
+        is_first = len(history) == 0
 
         if len(history) > MAX_HISTORY_TURNS * 2:
             yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
@@ -179,6 +192,9 @@ def chat_stream(req: ChatRequest):
                 yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
         save_messages(req.session_id, req.question, full_answer)
+        if is_first:
+            title = generate_session_title(req.question, llm)
+            save_session_title(req.session_id, title)
         yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -196,6 +212,7 @@ async def chat_graph_stream(req: ChatRequest):
     async def event_generator():
         llm = get_llm(req.model)
         history = await asyncio.to_thread(get_history, req.session_id)
+        is_first = len(history) == 0
 
         if len(history) > MAX_HISTORY_TURNS * 2:
             yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
@@ -238,6 +255,9 @@ async def chat_graph_stream(req: ChatRequest):
                     yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
 
         await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
+        if is_first:
+            title = await asyncio.to_thread(generate_session_title, req.question, llm)
+            await asyncio.to_thread(save_session_title, req.session_id, title)
         yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

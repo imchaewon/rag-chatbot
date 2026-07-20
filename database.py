@@ -15,6 +15,12 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_titles (
+                session_id TEXT PRIMARY KEY,
+                title      TEXT NOT NULL
+            )
+        """)
 
 
 def get_history(session_id: str) -> list:
@@ -49,6 +55,15 @@ def clear_history(session_id: str):
 def delete_session(session_id: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM session_titles WHERE session_id = ?", (session_id,))
+
+
+def save_session_title(session_id: str, title: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO session_titles (session_id, title) VALUES (?, ?)",
+            (session_id, title),
+        )
 
 
 def get_sessions() -> list:
@@ -56,11 +71,13 @@ def get_sessions() -> list:
         rows = conn.execute("""
             SELECT
                 ch.session_id,
-                (SELECT content FROM chat_history
-                 WHERE session_id = ch.session_id AND role = 'human'
-                 ORDER BY id ASC LIMIT 1) as title,
+                COALESCE(st.title,
+                    (SELECT content FROM chat_history
+                     WHERE session_id = ch.session_id AND role = 'human'
+                     ORDER BY id ASC LIMIT 1)) as title,
                 MAX(ch.created_at) as last_active
             FROM chat_history ch
+            LEFT JOIN session_titles st ON st.session_id = ch.session_id
             GROUP BY ch.session_id
             ORDER BY last_active DESC
         """).fetchall()
