@@ -704,3 +704,99 @@ while (true) {
 | `POST /chat-graph` | 일반 HTTP | (레거시) |
 | `POST /chat-graph-stream` | SSE 스트리밍 | LangGraph 모드 |
 | `POST /clear` | 일반 HTTP | 히스토리 초기화 |
+
+---
+
+## 마크다운 렌더링
+
+### 문제
+
+LLM은 답변을 `**굵게**`, ` ```코드블록``` `, `- 목록` 같은 마크다운 형식으로 출력하는 경우가 많은데,
+기존 코드는 `\n`을 `<br>`로만 바꿔서 마크다운 문법이 그대로 텍스트로 보임.
+
+### 해결 방법
+
+marked.js 라이브러리를 CDN으로 불러와 `marked.parse()`로 렌더링.
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+```
+
+```javascript
+marked.setOptions({ breaks: true, gfm: true });
+// breaks: \n을 <br>로 변환
+// gfm: GitHub Flavored Markdown (코드블록, 테이블 등)
+
+// 스트리밍 중 토큰 받을 때마다 렌더링
+bubble.innerHTML = marked.parse(fullText);
+```
+
+스트리밍 중에도 토큰이 추가될 때마다 `marked.parse()`를 호출해서 실시간으로 마크다운이 적용됨.
+
+---
+
+## 소스 문서 표시
+
+### 목적
+
+RAG는 벡터DB에서 관련 문서를 검색해서 답변을 생성하는데, 어떤 문서를 참고했는지 사용자에게 보여주면
+답변의 신뢰성을 높이고 직접 확인할 수 있게 해줌.
+
+### 구현 흐름
+
+```
+retriever.invoke(질문) → docs (Document 객체 리스트)
+                           ↓
+docs[i].metadata["source"] → 파일 경로 (예: "docs/msp_manual.txt")
+                           ↓
+os.path.basename() → 파일명만 추출 (예: "msp_manual.txt")
+                           ↓
+done 이벤트에 sources 포함해서 클라이언트 전송
+```
+
+### 백엔드 — sources 수집
+
+```python
+docs = retriever.invoke(req.question)
+sources = list({os.path.basename(doc.metadata.get("source", ""))
+                for doc in docs if doc.metadata.get("source")})
+
+# done 이벤트에 포함
+yield f"data: {json.dumps({'type': 'done', 'sources': sources})}\n\n"
+```
+
+set으로 중복 제거 (같은 파일의 여러 청크가 검색될 수 있음).
+
+### LangGraph 모드 — GraphState에 sources 추가
+
+```python
+class GraphState(TypedDict):
+    ...
+    sources: list  # retrieve_and_answer 노드에서 채움
+
+# retrieve_and_answer 노드
+sources = list({doc.metadata.get("source", "") for doc in docs if doc.metadata.get("source")})
+return {**state, "answer": response.content, "sources": sources}
+
+# reject 노드
+return {**state, "answer": "MSP 운영과 관련 없는 질문입니다...", "sources": []}
+```
+
+`on_chain_end` 이벤트에서 `retrieve_and_answer` 노드의 output에서 sources 추출.
+
+### 프론트엔드 — sources 표시
+
+```javascript
+} else if (data.type === "done") {
+    bubble.innerHTML = marked.parse(fullText);
+    if (data.sources && data.sources.length > 0) {
+        const sourcesEl = document.createElement("div");
+        sourcesEl.className = "sources";
+        sourcesEl.innerHTML = `📄 참고: ${data.sources.map(s => `<span>${s}</span>`).join("")}`;
+        div.appendChild(sourcesEl);
+    }
+}
+```
+
+답변 완료 후 버블 아래에 `📄 참고: msp_manual.txt` 형태로 표시.
+관련 없는 질문(reject)은 sources가 빈 배열이라 표시되지 않음.

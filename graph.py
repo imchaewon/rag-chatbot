@@ -10,6 +10,7 @@ class GraphState(TypedDict):
     chat_history: list
     answer: str
     relevant: str  # "yes" | "no"
+    sources: list
 
 
 def build_graph(retriever, llm):
@@ -31,6 +32,7 @@ def build_graph(retriever, llm):
     def retrieve_and_answer(state: GraphState) -> GraphState:
         docs = retriever.invoke(state["question"])
         context = "\n".join([doc.page_content for doc in docs])
+        sources = list({doc.metadata.get("source", "") for doc in docs if doc.metadata.get("source")})
 
         answer_prompt = ChatPromptTemplate.from_messages([
             ("system", """당신은 MSP 운영팀의 운영 도우미입니다.
@@ -48,11 +50,11 @@ def build_graph(retriever, llm):
             "question": state["question"],
             "chat_history": state["chat_history"],
         })
-        return {**state, "context": context, "answer": response.content}
+        return {**state, "context": context, "answer": response.content, "sources": sources}
 
     # ── 노드 3: 관련 없음 반환 ───────────────────────────────────────
     def reject(state: GraphState) -> GraphState:
-        return {**state, "answer": "MSP 운영과 관련 없는 질문입니다. 운영 매뉴얼 관련 질문을 입력해주세요."}
+        return {**state, "answer": "MSP 운영과 관련 없는 질문입니다. 운영 매뉴얼 관련 질문을 입력해주세요.", "sources": []}
 
     # ── 분기 함수 ────────────────────────────────────────────────────
     def route(state: GraphState) -> str:

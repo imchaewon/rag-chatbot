@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -164,6 +165,7 @@ def chat_stream(req: ChatRequest):
 
         docs = retriever.invoke(req.question)
         context = "\n".join([doc.page_content for doc in docs])
+        sources = list({os.path.basename(doc.metadata.get("source", "")) for doc in docs if doc.metadata.get("source")})
 
         full_answer = ""
         for chunk in (prompt | llm).stream({
@@ -177,7 +179,7 @@ def chat_stream(req: ChatRequest):
                 yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
         save_messages(req.session_id, req.question, full_answer)
-        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -208,9 +210,11 @@ async def chat_graph_stream(req: ChatRequest):
             "chat_history": chat_history,
             "answer": "",
             "relevant": "",
+            "sources": [],
         }
 
         full_answer = ""
+        sources = []
 
         async for event in graph.astream_events(initial_state, version="v2"):
             kind = event["event"]
@@ -225,13 +229,16 @@ async def chat_graph_stream(req: ChatRequest):
 
             elif kind == "on_chain_end":
                 node = event.get("metadata", {}).get("langgraph_node", "")
-                if node == "reject":
+                if node == "retrieve_and_answer":
+                    output = event["data"].get("output", {})
+                    sources = [os.path.basename(s) for s in output.get("sources", []) if s]
+                elif node == "reject":
                     output = event["data"].get("output", {})
                     full_answer = output.get("answer", "")
                     yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
 
         await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
-        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),
