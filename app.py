@@ -87,6 +87,15 @@ def get_llm(model: str):
         return ChatOllama(model="qwen2.5:7b")
 
 
+def _api_error_message(e: Exception) -> str:
+    msg = str(e)
+    if "429" in msg or "rate_limit" in msg.lower():
+        return "토큰 사용량 한도를 초과했습니다. 잠시 후 다시 시도하거나 다른 모델을 선택해주세요."
+    if "401" in msg or "authentication" in msg.lower():
+        return "API 인증에 실패했습니다. API 키를 확인해주세요."
+    return "오류가 발생했습니다. 다시 시도해주세요."
+
+
 def generate_session_title(question: str, llm) -> str:
     title_prompt = ChatPromptTemplate.from_messages([
         ("system", """사용자 질문을 채팅 목록에 표시할 짧은 제목으로 바꿔주세요.
@@ -170,32 +179,36 @@ def chat_stream(req: ChatRequest):
         history = get_history(req.session_id)
         is_first = len(history) == 0
 
-        if len(history) > MAX_HISTORY_TURNS * 2:
-            yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
-            chat_history = compress_history(history, llm)
-        else:
-            chat_history = history
+        try:
+            if len(history) > MAX_HISTORY_TURNS * 2:
+                yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
+                chat_history = compress_history(history, llm)
+            else:
+                chat_history = history
 
-        docs = retriever.invoke(req.question)
-        context = "\n".join([doc.page_content for doc in docs])
-        sources = list({os.path.basename(doc.metadata.get("source", "")) for doc in docs if doc.metadata.get("source")})
+            docs = retriever.invoke(req.question)
+            context = "\n".join([doc.page_content for doc in docs])
+            sources = list({os.path.basename(doc.metadata.get("source", "")) for doc in docs if doc.metadata.get("source")})
 
-        full_answer = ""
-        for chunk in (prompt | llm).stream({
-            "context": context,
-            "question": req.question,
-            "chat_history": chat_history,
-        }):
-            token = chunk.content
-            if token:
-                full_answer += token
-                yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
+            full_answer = ""
+            for chunk in (prompt | llm).stream({
+                "context": context,
+                "question": req.question,
+                "chat_history": chat_history,
+            }):
+                token = chunk.content
+                if token:
+                    full_answer += token
+                    yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
-        save_messages(req.session_id, req.question, full_answer)
-        if is_first:
-            title = generate_session_title(req.question, llm)
-            save_session_title(req.session_id, title)
-        yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
+            save_messages(req.session_id, req.question, full_answer)
+            if is_first:
+                title = generate_session_title(req.question, llm)
+                save_session_title(req.session_id, title)
+            yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': _api_error_message(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -214,51 +227,55 @@ async def chat_graph_stream(req: ChatRequest):
         history = await asyncio.to_thread(get_history, req.session_id)
         is_first = len(history) == 0
 
-        if len(history) > MAX_HISTORY_TURNS * 2:
-            yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
-            chat_history = await asyncio.to_thread(compress_history, history, llm)
-        else:
-            chat_history = history
+        try:
+            if len(history) > MAX_HISTORY_TURNS * 2:
+                yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
+                chat_history = await asyncio.to_thread(compress_history, history, llm)
+            else:
+                chat_history = history
 
-        graph = build_graph(retriever, llm)
-        initial_state = {
-            "question": req.question,
-            "context": "",
-            "chat_history": chat_history,
-            "answer": "",
-            "relevant": "",
-            "sources": [],
-        }
+            graph = build_graph(retriever, llm)
+            initial_state = {
+                "question": req.question,
+                "context": "",
+                "chat_history": chat_history,
+                "answer": "",
+                "relevant": "",
+                "sources": [],
+            }
 
-        full_answer = ""
-        sources = []
+            full_answer = ""
+            sources = []
 
-        async for event in graph.astream_events(initial_state, version="v2"):
-            kind = event["event"]
+            async for event in graph.astream_events(initial_state, version="v2"):
+                kind = event["event"]
 
-            if kind == "on_chat_model_stream":
-                node = event.get("metadata", {}).get("langgraph_node", "")
-                if node == "retrieve_and_answer":
-                    token = event["data"]["chunk"].content
-                    if token:
-                        full_answer += token
-                        yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
+                if kind == "on_chat_model_stream":
+                    node = event.get("metadata", {}).get("langgraph_node", "")
+                    if node == "retrieve_and_answer":
+                        token = event["data"]["chunk"].content
+                        if token:
+                            full_answer += token
+                            yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
-            elif kind == "on_chain_end":
-                node = event.get("metadata", {}).get("langgraph_node", "")
-                if node == "retrieve_and_answer":
-                    output = event["data"].get("output", {})
-                    sources = [os.path.basename(s) for s in output.get("sources", []) if s]
-                elif node == "reject":
-                    output = event["data"].get("output", {})
-                    full_answer = output.get("answer", "")
-                    yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
+                elif kind == "on_chain_end":
+                    node = event.get("metadata", {}).get("langgraph_node", "")
+                    if node == "retrieve_and_answer":
+                        output = event["data"].get("output", {})
+                        sources = [os.path.basename(s) for s in output.get("sources", []) if s]
+                    elif node == "reject":
+                        output = event["data"].get("output", {})
+                        full_answer = output.get("answer", "")
+                        yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
 
-        await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
-        if is_first:
-            title = await asyncio.to_thread(generate_session_title, req.question, llm)
-            await asyncio.to_thread(save_session_title, req.session_id, title)
-        yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
+            await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
+            if is_first:
+                title = await asyncio.to_thread(generate_session_title, req.question, llm)
+                await asyncio.to_thread(save_session_title, req.session_id, title)
+            yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': _api_error_message(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),

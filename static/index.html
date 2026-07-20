@@ -637,7 +637,9 @@
             if (!part.startsWith("data: ")) continue;
             const data = JSON.parse(part.slice(6));
 
-            if (data.type === "status" || data.type === "retry") {
+            if (data.type === "error") {
+              bubble.innerHTML = `<span style="color:#ea4335">⚠️ ${data.content}</span>`;
+            } else if (data.type === "status" || data.type === "retry") {
               fullText = "";
               bubble.innerHTML = `<em style="color:#999">${data.content}</em>`;
             } else if (data.type === "token") {
