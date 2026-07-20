@@ -13,7 +13,10 @@ class GraphState(TypedDict):
     sources: list
 
 
-def build_graph(retriever, llm):
+SOURCE_SCORE_THRESHOLD = 0.5
+
+
+def build_graph(retriever, llm, vectorstore=None):
 
     # ── 노드 1: 관련성 판단 ──────────────────────────────────────────
     def check_relevance(state: GraphState) -> GraphState:
@@ -30,9 +33,16 @@ def build_graph(retriever, llm):
 
     # ── 노드 2: 검색 + 답변 생성 ─────────────────────────────────────
     def retrieve_and_answer(state: GraphState) -> GraphState:
-        docs = retriever.invoke(state["question"])
+        if vectorstore is not None:
+            docs_with_scores = vectorstore.similarity_search_with_relevance_scores(state["question"], k=4)
+            docs = [doc for doc, _ in docs_with_scores]
+            sources = list({doc.metadata.get("source", "")
+                            for doc, score in docs_with_scores
+                            if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")})
+        else:
+            docs = retriever.invoke(state["question"])
+            sources = list({doc.metadata.get("source", "") for doc in docs if doc.metadata.get("source")})
         context = "\n".join([doc.page_content for doc in docs])
-        sources = list({doc.metadata.get("source", "") for doc in docs if doc.metadata.get("source")})
 
         answer_prompt = ChatPromptTemplate.from_messages([
             ("system", """당신은 MSP 운영팀의 운영 도우미입니다.

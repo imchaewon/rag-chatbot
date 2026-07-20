@@ -20,9 +20,12 @@ from graph import build_graph
 load_dotenv()
 
 # 앱 시작 시 한 번만 로드
+SOURCE_SCORE_THRESHOLD = 0.5  # 이 점수 미만인 문서는 출처에 표시하지 않음
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global retriever, prompt
+    global retriever, vectorstore, prompt
     embeddings = UpstageEmbeddings(model="solar-embedding-1-large")
     vectorstore = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
     retriever = vectorstore.as_retriever()
@@ -153,7 +156,7 @@ def chat_graph(req: ChatRequest):
 
     llm = get_llm(req.model)
     chat_history = compress_history(get_history(req.session_id), llm)
-    graph = build_graph(retriever, llm)
+    graph = build_graph(retriever, llm, vectorstore)
 
     result = graph.invoke({
         "question": req.question,
@@ -186,9 +189,12 @@ def chat_stream(req: ChatRequest):
             else:
                 chat_history = history
 
-            docs = retriever.invoke(req.question)
+            docs_with_scores = vectorstore.similarity_search_with_relevance_scores(req.question, k=4)
+            docs = [doc for doc, _ in docs_with_scores]
             context = "\n".join([doc.page_content for doc in docs])
-            sources = list({os.path.basename(doc.metadata.get("source", "")) for doc in docs if doc.metadata.get("source")})
+            sources = list({os.path.basename(doc.metadata.get("source", ""))
+                            for doc, score in docs_with_scores
+                            if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")})
 
             full_answer = ""
             for chunk in (prompt | llm).stream({
@@ -236,7 +242,7 @@ async def chat_graph_stream(req: ChatRequest):
             else:
                 chat_history = history
 
-            graph = build_graph(retriever, llm)
+            graph = build_graph(retriever, llm, vectorstore)
             initial_state = {
                 "question": req.question,
                 "context": "",
