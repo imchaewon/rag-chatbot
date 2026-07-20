@@ -913,8 +913,9 @@ def get_full_history(session_id: str) -> list:
 ### 백엔드 추가 엔드포인트 — app.py
 
 ```python
-GET /sessions               → 전체 세션 목록 (session_id, title, last_active)
-GET /sessions/{session_id}  → 특정 세션의 전체 히스토리
+GET    /sessions               → 전체 세션 목록 (session_id, title, last_active)
+GET    /sessions/{session_id}  → 특정 세션의 전체 히스토리
+DELETE /sessions/{session_id}  → 세션 삭제
 ```
 
 ### 프론트엔드 구조 변경 — index.html
@@ -960,8 +961,76 @@ async function sendMessage() {
 
 ### 세션 제목 결정 방식
 
-별도 제목 입력 없이 **첫 번째 질문 텍스트**를 제목으로 사용.
-DB SQL 서브쿼리로 `role = 'human'` 중 `id ASC LIMIT 1`로 추출.
+AI가 첫 번째 질문을 분석해 15글자 이내 제목 자동 생성 → `session_titles` 테이블에 저장.
+AI 제목이 없는 기존 세션은 첫 질문 텍스트를 fallback으로 사용.
+
+---
+
+## 세션 삭제
+
+사이드바 각 세션 항목에 ✕ 버튼 추가. 마우스 hover 시에만 표시.
+
+### 백엔드
+
+```python
+DELETE /sessions/{session_id}
+# database.py: delete_session() — chat_history + session_titles 동시 삭제
+```
+
+### 프론트엔드
+
+```javascript
+async function deleteSession(sessionId) {
+    await fetch(`/sessions/${sessionId}`, { method: "DELETE" });
+    if (sessionId === currentSessionId) newChat();  // 현재 세션이면 새 대화로 전환
+    loadSessionList();
+}
+```
+
+삭제 버튼 클릭 시 세션 선택 이벤트와 충돌하지 않도록 `e.stopPropagation()` 처리.
+
+---
+
+## AI 세션 제목 자동 생성
+
+### 동작 방식
+
+첫 메시지 전송 후, 답변 완료 시점에 같은 LLM으로 짧은 제목 생성.
+두 번째 메시지부터는 생성하지 않음 (이미 저장된 제목 사용).
+
+### DB — session_titles 테이블
+
+```sql
+CREATE TABLE session_titles (
+    session_id TEXT PRIMARY KEY,
+    title      TEXT NOT NULL
+)
+```
+
+`get_sessions()`에서 `LEFT JOIN` + `COALESCE`로 AI 제목 우선, 없으면 첫 질문 텍스트 fallback.
+
+### 제목 생성 프롬프트
+
+```python
+def generate_session_title(question: str, llm) -> str:
+    # "사용자 질문을 채팅 목록에 표시할 짧은 제목으로 바꿔주세요. 15글자 이내, 제목만 출력"
+    result = (title_prompt | llm).invoke({"question": question})
+    return result.content.strip()[:20]
+```
+
+### 스트리밍 엔드포인트에서 호출
+
+```python
+is_first = len(history) == 0  # 첫 메시지 여부 미리 확인
+# ... 스트리밍 완료 후 ...
+save_messages(req.session_id, req.question, full_answer)
+if is_first:
+    title = generate_session_title(req.question, llm)
+    save_session_title(req.session_id, title)
+yield f"data: {json.dumps({'type': 'done', ...})}\n\n"
+```
+
+답변 스트리밍이 끝난 뒤 제목 생성 → 프론트에서 `loadSessionList()` 호출 시 AI 제목이 반영됨.
 
 ---
 
