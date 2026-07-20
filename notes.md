@@ -1059,11 +1059,20 @@ def _api_error_message(e: Exception) -> str:
 # event_generator() 안
 try:
     # ... 스트리밍 로직 ...
+    yield done_event
+    if is_first:
+        try:
+            save_session_title(...)   # 제목 생성 실패는 조용히 무시
+        except Exception:
+            pass
 except Exception as e:
+    logging.error("스트리밍 중 오류 [session=%s model=%s]: %s", ...)
     yield f"data: {json.dumps({'type': 'error', 'content': _api_error_message(e)})}\n\n"
 ```
 
-`/chat-stream`과 `/chat-graph-stream` 양쪽에 동일하게 적용.
+- `done` 이벤트를 먼저 전송 후 제목 생성 → 제목 생성 실패가 사용자에게 노출되지 않음
+- 오류 발생 시 `logging.error`로 서버 로그에도 기록 (`ERROR:root:스트리밍 중 오류 발생 [session=... model=...]: ...`)
+- `/chat-stream`과 `/chat-graph-stream` 양쪽에 동일하게 적용
 
 ### 프론트엔드 — index.html
 
@@ -1074,6 +1083,23 @@ if (data.type === "error") {
 ```
 
 채팅 버블에 빨간색으로 오류 메시지 표시.
+
+### 출처 유사도 필터링
+
+`similarity_search_with_relevance_scores()`로 점수를 받아 0.5 미만인 문서는 출처에서 제외.
+"안녕" 같은 무관한 질문은 점수가 음수(-0.1 등)로 나와 출처가 표시되지 않음.
+음수 점수에 대한 Chroma `UserWarning`은 `warnings.catch_warnings()`로 억제.
+
+```python
+SOURCE_SCORE_THRESHOLD = 0.5
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", UserWarning)
+    docs_with_scores = vectorstore.similarity_search_with_relevance_scores(req.question, k=4)
+
+sources = list({os.path.basename(doc.metadata.get("source", ""))
+                for doc, score in docs_with_scores
+                if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")})
 
 ---
 
