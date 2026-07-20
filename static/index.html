@@ -190,6 +190,22 @@
     .btn-send:hover { background: #1557b0; }
     .btn-send:disabled { background: #ccc; cursor: not-allowed; }
 
+    .btn-stop {
+      width: 40px; height: 40px;
+      background: #ea4335;
+      border: none;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    .btn-stop:hover { background: #c5221f; }
+
     /* 마크다운 스타일 */
     .bubble p { margin: 0 0 6px; }
     .bubble p:last-child { margin-bottom: 0; }
@@ -268,6 +284,7 @@
         onkeydown="handleKeydown(event)"
       />
       <button class="btn-send" id="sendBtn" onclick="sendMessage()">➤</button>
+      <button class="btn-stop" id="stopBtn" onclick="stopStreaming()">■</button>
     </div>
     <div style="padding: 6px 16px 10px; display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
       <input type="checkbox" id="graphMode" />
@@ -279,6 +296,18 @@
     marked.setOptions({ breaks: true, gfm: true });
 
     const sessionId = "session_" + Math.random().toString(36).slice(2, 9);
+    let abortController = null;
+
+    function stopStreaming() {
+      if (abortController) abortController.abort();
+    }
+
+    function setStreaming(active) {
+      const sendBtn = document.getElementById("sendBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      sendBtn.disabled = active;
+      stopBtn.style.display = active ? "flex" : "none";
+    }
 
     document.getElementById("initTime").textContent = now();
 
@@ -332,12 +361,12 @@
       const sendBtn = document.getElementById("sendBtn");
 
       input.value = "";
-      sendBtn.disabled = true;
       appendMessage("user", question);
+      setStreaming(true);
 
       const endpoint = graphMode ? "/chat-graph-stream" : "/chat-stream";
       await streamMessage(question, model, endpoint);
-      sendBtn.disabled = false;
+      setStreaming(false);
       input.focus();
     }
 
@@ -352,11 +381,14 @@
 
       let fullText = "";
 
+      abortController = new AbortController();
+
       try {
         const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question, session_id: sessionId, model }),
+          signal: abortController.signal,
         });
 
         const reader = res.body.getReader();
@@ -394,7 +426,11 @@
           }
         }
       } catch (e) {
-        bubble.textContent = "서버에 연결할 수 없습니다.";
+        if (e.name !== "AbortError") {
+          bubble.textContent = "서버에 연결할 수 없습니다.";
+        }
+      } finally {
+        abortController = null;
       }
     }
 
