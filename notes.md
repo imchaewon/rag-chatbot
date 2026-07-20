@@ -800,3 +800,43 @@ return {**state, "answer": "MSP 운영과 관련 없는 질문입니다...", "so
 
 답변 완료 후 버블 아래에 `📄 참고: msp_manual.txt` 형태로 표시.
 관련 없는 질문(reject)은 sources가 빈 배열이라 표시되지 않음.
+
+---
+
+## 스트리밍 중단 버튼
+
+### 구현 방식
+
+`AbortController`로 fetch 요청을 취소하면 클라이언트-서버 연결이 끊기고,
+FastAPI의 스트리밍 제너레이터는 다음 `yield` 시점에 자동으로 멈춤. **백엔드 수정 불필요.**
+
+```javascript
+let abortController = null;
+
+// 스트리밍 시작 시
+abortController = new AbortController();
+const res = await fetch(endpoint, {
+    ...
+    signal: abortController.signal,  // AbortController 연결
+});
+
+// 중단 버튼 클릭 시
+function stopStreaming() {
+    if (abortController) abortController.abort();
+}
+
+// AbortError는 오류가 아니라 의도적 취소 → 오류 메시지 미표시
+} catch (e) {
+    if (e.name !== "AbortError") {
+        bubble.textContent = "서버에 연결할 수 없습니다.";
+    }
+}
+```
+
+### UX 흐름
+
+```
+스트리밍 시작 → 전송 버튼 비활성화 + 빨간 ■ 버튼 등장
+■ 클릭       → fetch 즉시 취소, 서버 스트림 자동 중단
+완료 또는 취소 → ■ 버튼 사라짐, 전송 버튼 복귀
+```
