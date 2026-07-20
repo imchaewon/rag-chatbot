@@ -11,6 +11,7 @@ from langchain_upstage import UpstageEmbeddings, ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_chroma import Chroma
 from database import init_db, get_history, save_messages, clear_history
+from graph import build_graph
 
 load_dotenv()
 
@@ -93,6 +94,29 @@ def chat(req: ChatRequest):
     })
 
     answer = response.content
+    save_messages(req.session_id, req.question, answer)
+
+    return ChatResponse(answer=answer, session_id=req.session_id)
+
+
+@app.post("/chat-graph", response_model=ChatResponse)
+def chat_graph(req: ChatRequest):
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
+
+    chat_history = get_history(req.session_id)
+    llm = get_llm(req.model)
+    graph = build_graph(retriever, llm)
+
+    result = graph.invoke({
+        "question": req.question,
+        "context": "",
+        "chat_history": chat_history,
+        "answer": "",
+        "relevant": "",
+    })
+
+    answer = result["answer"]
     save_messages(req.session_id, req.question, answer)
 
     return ChatResponse(answer=answer, session_id=req.session_id)
