@@ -101,14 +101,19 @@ def _api_error_message(e: Exception) -> str:
 
 def generate_session_title(question: str, llm) -> str:
     title_prompt = ChatPromptTemplate.from_messages([
-        ("system", """사용자 질문을 채팅 목록에 표시할 짧은 제목으로 바꿔주세요.
-- 15글자 이내
-- 핵심 내용 위주
-- 제목만 출력, 따옴표 없음"""),
+        ("system", """아래 질문을 채팅 목록에 표시할 제목으로 만드세요.
+출력 규칙:
+- 제목 텍스트만 출력, 다른 말 절대 금지
+- 10글자 이내
+- 인사말·잡담이면 "일반 대화" 출력
+예시: "VM 재시작 절차", "K8s Pod 오류", "방화벽 정책 신청"
+질문:"""),
         ("human", "{question}"),
     ])
     result = (title_prompt | llm).invoke({"question": question})
-    return result.content.strip()[:20]
+    title = result.content.strip().splitlines()[0]
+    title = title.strip("\"'.,。·· ")
+    return title[:15]
 
 
 class ChatRequest(BaseModel):
