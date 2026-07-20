@@ -50,6 +50,8 @@ def get_llm(model: str):
         return ChatGoogleGenerativeAI(model="gemini-2.0-flash")
     elif model == "solar":
         return ChatUpstage(model="solar-pro")
+    elif model == "llama":
+        return ChatOllama(model="llama3.1:8b")
     else:
         return ChatOllama(model="qwen2.5:7b")
 
