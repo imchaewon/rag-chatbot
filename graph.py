@@ -1,3 +1,4 @@
+import warnings
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -34,7 +35,9 @@ def build_graph(retriever, llm, vectorstore=None):
     # ── 노드 2: 검색 + 답변 생성 ─────────────────────────────────────
     def retrieve_and_answer(state: GraphState) -> GraphState:
         if vectorstore is not None:
-            docs_with_scores = vectorstore.similarity_search_with_relevance_scores(state["question"], k=4)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                docs_with_scores = vectorstore.similarity_search_with_relevance_scores(state["question"], k=4)
             docs = [doc for doc, _ in docs_with_scores]
             sources = list({doc.metadata.get("source", "")
                             for doc, score in docs_with_scores

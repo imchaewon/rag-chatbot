@@ -1,5 +1,6 @@
 import asyncio
 import os
+import warnings
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -193,7 +194,9 @@ def chat_stream(req: ChatRequest):
             else:
                 chat_history = history
 
-            docs_with_scores = vectorstore.similarity_search_with_relevance_scores(req.question, k=4)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                docs_with_scores = vectorstore.similarity_search_with_relevance_scores(req.question, k=4)
             docs = [doc for doc, _ in docs_with_scores]
             context = "\n".join([doc.page_content for doc in docs])
             sources = list({os.path.basename(doc.metadata.get("source", ""))
