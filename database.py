@@ -44,3 +44,16 @@ def save_messages(session_id: str, question: str, answer: str):
 def clear_history(session_id: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
+
+
+def get_question_stats(limit: int = 20) -> list:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("""
+            SELECT content, COUNT(*) as count
+            FROM chat_history
+            WHERE role = 'human'
+            GROUP BY content
+            ORDER BY count DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+    return [{"question": row[0], "count": row[1]} for row in rows]

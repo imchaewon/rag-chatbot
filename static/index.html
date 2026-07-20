@@ -244,9 +244,73 @@
       padding: 1px 7px;
       border-radius: 10px;
     }
+
+    /* 통계 모달 */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px;
+      width: 440px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .modal-header h2 { font-size: 16px; font-weight: 600; }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 18px;
+      cursor: pointer;
+      color: #9aa0a6;
+      line-height: 1;
+    }
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 0;
+      border-bottom: 1px solid #f1f3f4;
+      font-size: 13px;
+      gap: 8px;
+    }
+    .stat-item:last-child { border-bottom: none; }
+    .stat-question { flex: 1; color: #202124; }
+    .stat-count {
+      background: #1a73e8;
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
+  <div class="modal-overlay" id="statsModal" onclick="hideStats(event)">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>자주 묻는 질문 TOP 20</h2>
+        <button class="modal-close" onclick="document.getElementById('statsModal').style.display='none'">✕</button>
+      </div>
+      <div id="statsList"></div>
+    </div>
+  </div>
+
   <div class="chat-container">
     <div class="header">
       <div class="header-left">
@@ -265,6 +329,7 @@
           <option value="gemini">Gemini</option>
           <option value="solar">Solar Pro</option>
         </select>
+        <button class="btn-clear" onclick="showStats()">📊</button>
         <button class="btn-clear" onclick="clearHistory()">초기화</button>
       </div>
     </div>
@@ -431,6 +496,34 @@
         }
       } finally {
         abortController = null;
+      }
+    }
+
+    async function showStats() {
+      const modal = document.getElementById("statsModal");
+      const list = document.getElementById("statsList");
+      modal.style.display = "flex";
+      list.innerHTML = `<p style="color:#9aa0a6; font-size:13px; text-align:center; padding:20px">로딩 중...</p>`;
+
+      const res = await fetch("/stats");
+      const data = await res.json();
+
+      if (data.questions.length === 0) {
+        list.innerHTML = `<p style="color:#9aa0a6; font-size:13px; text-align:center; padding:20px">아직 질문 기록이 없습니다.</p>`;
+        return;
+      }
+
+      list.innerHTML = data.questions.map((q, i) => `
+        <div class="stat-item">
+          <span class="stat-question">${i + 1}. ${q.question.length > 45 ? q.question.slice(0, 45) + "…" : q.question}</span>
+          <span class="stat-count">${q.count}회</span>
+        </div>
+      `).join("");
+    }
+
+    function hideStats(e) {
+      if (e.target === document.getElementById("statsModal")) {
+        document.getElementById("statsModal").style.display = "none";
       }
     }
 
