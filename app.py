@@ -14,7 +14,7 @@ from langchain_upstage import UpstageEmbeddings, ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
-from database import init_db, get_history, save_messages, clear_history, get_question_stats
+from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history
 from graph import build_graph
 
 load_dotenv()
@@ -251,6 +251,16 @@ async def chat_graph_stream(req: ChatRequest):
 def clear(req: ClearRequest):
     clear_history(req.session_id)
     return {"message": f"세션 '{req.session_id}' 히스토리가 초기화되었습니다."}
+
+
+@app.get("/sessions")
+def list_sessions():
+    return {"sessions": get_sessions()}
+
+
+@app.get("/sessions/{session_id}")
+def session_history(session_id: str):
+    return {"history": get_full_history(session_id)}
 
 
 @app.get("/stats")

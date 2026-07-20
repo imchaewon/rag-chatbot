@@ -46,6 +46,31 @@ def clear_history(session_id: str):
         conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
 
 
+def get_sessions() -> list:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("""
+            SELECT
+                ch.session_id,
+                (SELECT content FROM chat_history
+                 WHERE session_id = ch.session_id AND role = 'human'
+                 ORDER BY id ASC LIMIT 1) as title,
+                MAX(ch.created_at) as last_active
+            FROM chat_history ch
+            GROUP BY ch.session_id
+            ORDER BY last_active DESC
+        """).fetchall()
+    return [{"session_id": r[0], "title": r[1] or "새 대화", "last_active": r[2]} for r in rows]
+
+
+def get_full_history(session_id: str) -> list:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT role, content FROM chat_history WHERE session_id = ? ORDER BY id",
+            (session_id,),
+        ).fetchall()
+    return [{"role": row[0], "content": row[1]} for row in rows]
+
+
 def get_question_stats(limit: int = 20) -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""
