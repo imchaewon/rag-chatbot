@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from langchain_ollama import ChatOllama
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_upstage import UpstageEmbeddings, ChatUpstage
@@ -43,18 +44,20 @@ def index():
 
 
 def get_llm(model: str):
-    if model == "gemini":
+    if model == "groq":
+        return ChatGroq(model="llama-3.3-70b-versatile")
+    elif model == "gemini":
         return ChatGoogleGenerativeAI(model="gemini-2.0-flash")
     elif model == "solar":
         return ChatUpstage(model="solar-pro")
     else:
-        return ChatGroq(model="llama-3.3-70b-versatile")
+        return ChatOllama(model="qwen2.5:7b")
 
 
 class ChatRequest(BaseModel):
     question: str
     session_id: str = "default"
-    model: str = "groq"  # groq | gemini | solar
+    model: str = "ollama"  # ollama | groq | gemini | solar
 
 
 class ChatResponse(BaseModel):
