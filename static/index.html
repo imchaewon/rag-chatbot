@@ -776,16 +776,6 @@
               messages.scrollTop = messages.scrollHeight;
             } else if (data.type === "done") {
               bubble.innerHTML = marked.parse(fullText);
-              if (fullText) {
-                const actionsEl = document.createElement("div");
-                actionsEl.className = "message-actions";
-                const copyBtn = document.createElement("button");
-                copyBtn.className = "btn-copy";
-                copyBtn.textContent = "📋 복사";
-                copyBtn.addEventListener("click", () => copyToClipboard(copyBtn, fullText));
-                actionsEl.appendChild(copyBtn);
-                div.appendChild(actionsEl);
-              }
               if (data.sources && data.sources.length > 0) {
                 const sourcesEl = document.createElement("div");
                 sourcesEl.className = "sources";
@@ -795,13 +785,32 @@
               if (fullText) {
                 const fbRow = document.createElement("div");
                 fbRow.className = "feedback-row";
-                fbRow.innerHTML = `
-                  <button class="btn-feedback" data-rating="1" title="도움됨">👍</button>
-                  <button class="btn-feedback" data-rating="-1" title="도움 안됨">👎</button>
-                `;
-                fbRow.querySelectorAll(".btn-feedback").forEach(btn => {
+
+                const thumbUp = document.createElement("button");
+                thumbUp.className = "btn-feedback";
+                thumbUp.dataset.rating = "1";
+                thumbUp.title = "도움됨";
+                thumbUp.textContent = "👍";
+
+                const thumbDown = document.createElement("button");
+                thumbDown.className = "btn-feedback";
+                thumbDown.dataset.rating = "-1";
+                thumbDown.title = "도움 안됨";
+                thumbDown.textContent = "👎";
+
+                const copyBtn = document.createElement("button");
+                copyBtn.className = "btn-copy";
+                copyBtn.style.marginLeft = "auto";
+                copyBtn.textContent = "📋 복사";
+                copyBtn.addEventListener("click", () => copyToClipboard(copyBtn, fullText));
+
+                [thumbUp, thumbDown].forEach(btn => {
                   btn.addEventListener("click", () => submitFeedback(question, fullText, parseInt(btn.dataset.rating), fbRow));
                 });
+
+                fbRow.appendChild(thumbUp);
+                fbRow.appendChild(thumbDown);
+                fbRow.appendChild(copyBtn);
                 div.appendChild(fbRow);
               }
               messages.scrollTop = messages.scrollHeight;
