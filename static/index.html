@@ -721,7 +721,7 @@
         actionsEl.className = "message-actions";
         const copyBtn = document.createElement("button");
         copyBtn.className = "btn-copy";
-        copyBtn.textContent = "📋 복사";
+        copyBtn.textContent = "📋";
         copyBtn.addEventListener("click", () => copyToClipboard(copyBtn, text));
         actionsEl.appendChild(copyBtn);
         div.appendChild(actionsEl);
@@ -834,7 +834,7 @@
                 const copyBtn = document.createElement("button");
                 copyBtn.className = "btn-copy";
                 copyBtn.style.marginLeft = "auto";
-                copyBtn.textContent = "📋 복사";
+                copyBtn.textContent = "📋";
                 copyBtn.addEventListener("click", () => copyToClipboard(copyBtn, fullText));
 
                 [thumbUp, thumbDown].forEach(btn => {
@@ -1005,7 +1005,7 @@
     function copyToClipboard(btn, text) {
       navigator.clipboard.writeText(text).then(() => {
         btn.textContent = "✓ 복사됨";
-        setTimeout(() => { btn.textContent = "📋 복사"; }, 2000);
+        setTimeout(() => { btn.textContent = "📋"; }, 2000);
       });
     }
 
