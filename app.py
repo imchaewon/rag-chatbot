@@ -60,10 +60,11 @@ def index():
     return FileResponse("static/index.html")
 
 
-MAX_HISTORY_TURNS = 5  # 최근 5턴(메시지 10개) 초과 시 압축
+COMPRESS_TRIGGER_TURNS = 5  # 이 턴 수 이상이면 압축 트리거 (5턴 = 10메시지)
+COMPRESS_KEEP_TURNS = 2     # 압축 후 풀 텍스트로 유지할 턴 수 → 3번 질문마다 한 번 압축
 
 
-def get_compressed_history(session_id: str, llm, needs_compress: bool = False) -> tuple[list, bool]:
+def get_compressed_history(session_id: str, llm) -> tuple[list, bool]:
     """캐시된 요약을 활용해 LLM 재요약을 최소화.
     반환: (chat_history 리스트, 이번에 실제로 LLM 요약을 호출했는지 여부)
     """
@@ -73,15 +74,18 @@ def get_compressed_history(session_id: str, llm, needs_compress: bool = False) -
     rows = get_messages_after(session_id, after_id)  # [(db_id, msg), ...]
     messages = [msg for _, msg in rows]
 
-    if len(messages) <= MAX_HISTORY_TURNS * 2:
+    trigger = COMPRESS_TRIGGER_TURNS * 2  # 10
+    keep = COMPRESS_KEEP_TURNS * 2        # 4
+
+    if len(messages) < trigger:
         # 창 안에 들어옴 → LLM 호출 없이 캐시 요약 + 최근 메시지 반환
         if saved:
             return [SystemMessage(content=f"[이전 대화 요약]\n{saved['summary']}")] + messages, False
         return messages, False
 
     # 창 밖으로 새 메시지가 밀려남 → 재요약 필요
-    old_rows = rows[:-(MAX_HISTORY_TURNS * 2)]
-    recent_msgs = [msg for _, msg in rows[-(MAX_HISTORY_TURNS * 2):]]
+    old_rows = rows[:-keep]
+    recent_msgs = [msg for _, msg in rows[-keep:]]
 
     old_text = "\n".join([
         f"{'사용자' if isinstance(msg, HumanMessage) else 'AI'}: {msg.content}"
