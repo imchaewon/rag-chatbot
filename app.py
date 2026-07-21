@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from database import init_db, get_history, save_messages, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, save_feedback, get_feedback_stats
+from database import init_db, get_history, save_messages, delete_last_pair, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, save_feedback, get_feedback_stats
 from graph import build_graph
 
 load_dotenv()
@@ -123,6 +123,7 @@ class ChatRequest(BaseModel):
     question: str
     session_id: str = "default"
     model: str = "ollama"  # ollama | groq | gemini | solar
+    regenerate: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -185,7 +186,12 @@ def chat_stream(req: ChatRequest):
     def event_generator():
         llm = get_llm(req.model)
         history = get_history(req.session_id)
-        is_first = len(history) == 0
+
+        if req.regenerate and len(history) >= 2:
+            delete_last_pair(req.session_id)
+            history = history[:-2]
+
+        is_first = not req.regenerate and len(history) == 0
 
         try:
             if len(history) > MAX_HISTORY_TURNS * 2:
@@ -241,7 +247,12 @@ async def chat_graph_stream(req: ChatRequest):
     async def event_generator():
         llm = get_llm(req.model)
         history = await asyncio.to_thread(get_history, req.session_id)
-        is_first = len(history) == 0
+
+        if req.regenerate and len(history) >= 2:
+            await asyncio.to_thread(delete_last_pair, req.session_id)
+            history = history[:-2]
+
+        is_first = not req.regenerate and len(history) == 0
 
         try:
             if len(history) > MAX_HISTORY_TURNS * 2:

@@ -57,6 +57,20 @@ def save_messages(session_id: str, question: str, answer: str):
         )
 
 
+def delete_last_pair(session_id: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT 2",
+            (session_id,),
+        ).fetchall()
+        if len(rows) == 2:
+            ids = [r[0] for r in rows]
+            conn.execute(
+                f"DELETE FROM chat_history WHERE id IN ({','.join('?' * len(ids))})",
+                ids,
+            )
+
+
 def clear_history(session_id: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
