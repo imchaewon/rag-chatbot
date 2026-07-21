@@ -910,24 +910,6 @@
       loadSessionList();
     }
 
-    // ── 초기화 ───────────────────────────────────────────────────────
-
-    async function clearHistory() {
-      await fetch("/clear", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: currentSessionId }),
-      });
-
-      document.getElementById("messages").innerHTML = `
-        <div class="message bot">
-          <div class="bubble">대화 히스토리가 초기화되었습니다 🗑️</div>
-          <div class="time">${now()}</div>
-        </div>
-      `;
-      loadSessionList();
-    }
-
     // ── 문서 관리 ─────────────────────────────────────────────────────
 
     function toggleDocPanel() {

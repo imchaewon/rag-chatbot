@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, save_feedback, get_feedback_stats
+from database import init_db, get_history, save_messages, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, save_feedback, get_feedback_stats
 from graph import build_graph
 
 load_dotenv()
@@ -129,9 +129,6 @@ class ChatResponse(BaseModel):
     answer: str
     session_id: str
 
-
-class ClearRequest(BaseModel):
-    session_id: str = "default"
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -306,11 +303,6 @@ async def chat_graph_stream(req: ChatRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
-
-@app.post("/clear")
-def clear(req: ClearRequest):
-    clear_history(req.session_id)
-    return {"message": f"세션 '{req.session_id}' 히스토리가 초기화되었습니다."}
 
 
 @app.get("/sessions")
