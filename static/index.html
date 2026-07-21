@@ -275,6 +275,29 @@
       padding: 0 4px;
     }
 
+    /* 생각 중 물결 애니메이션 */
+    .thinking {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 0;
+    }
+    .thinking span {
+      width: 7px;
+      height: 7px;
+      background: #9aa0a6;
+      border-radius: 50%;
+      animation: thinking-wave 1.4s ease-in-out infinite;
+      opacity: 0.4;
+    }
+    .thinking span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes thinking-wave {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-6px); opacity: 1; }
+    }
+
     /* 타이핑 인디케이터 */
     .typing-indicator {
       display: flex;
@@ -742,11 +765,12 @@
 
       const div = document.createElement("div");
       div.className = "message bot";
-      div.innerHTML = `<div class="bubble"></div><div class="time">${now()}</div>`;
+      div.innerHTML = `<div class="bubble"><div class="thinking"><span></span><span></span><span></span></div></div><div class="time">${now()}</div>`;
       messages.appendChild(div);
       const bubble = div.querySelector(".bubble");
 
       let fullText = "";
+      let isFirstToken = true;
       abortController = new AbortController();
 
       try {
@@ -779,6 +803,7 @@
               fullText = "";
               bubble.innerHTML = `<em style="color:#999">${data.content}</em>`;
             } else if (data.type === "token") {
+              if (isFirstToken) { bubble.innerHTML = ""; isFirstToken = false; }
               fullText += data.content;
               bubble.innerHTML = marked.parse(fullText);
               messages.scrollTop = messages.scrollHeight;
