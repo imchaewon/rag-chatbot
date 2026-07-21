@@ -252,10 +252,10 @@ def chat_stream(req: ChatRequest):
                         full_answer += token
                     yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
-            if not req.preview:
+            if not req.preview and docs:
                 save_messages(req.session_id, req.question, full_answer)
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
-            if is_first and not req.preview:
+            if is_first and not req.preview and docs:
                 try:
                     save_session_title(req.session_id, generate_session_title(req.question, llm))
                 except Exception:
