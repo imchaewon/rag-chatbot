@@ -301,6 +301,10 @@ async def chat_graph_stream(req: ChatRequest):
                 "relevant": "",
                 "sources": [],
                 "score_threshold": req.score_threshold,
+                "intent": "",
+                "k8s_action": "",
+                "k8s_target": "",
+                "k8s_namespace": "",
             }
 
             full_answer = ""
@@ -322,7 +326,7 @@ async def chat_graph_stream(req: ChatRequest):
                     if node == "retrieve_and_answer":
                         output = event["data"].get("output", {})
                         sources = [os.path.basename(s) for s in output.get("sources", []) if s]
-                    elif node == "reject":
+                    elif node in ("reject", "execute_k8s"):
                         output = event["data"].get("output", {})
                         full_answer = output.get("answer", "")
                         yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
