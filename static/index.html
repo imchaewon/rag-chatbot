@@ -561,6 +561,40 @@
     }
     .chip:hover { background: #e8f0fe; }
 
+    /* 비교 모드 */
+    .compare-message { max-width: 100% !important; align-self: stretch !important; }
+    .compare-wrap { display: flex; gap: 0; width: 100%; }
+    .compare-col {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 0 10px;
+    }
+    .compare-col:first-child { padding-left: 0; }
+    .compare-col:last-child { padding-right: 0; }
+    .compare-divider { width: 1px; background: #e8eaed; flex-shrink: 0; }
+    .compare-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #9aa0a6;
+      letter-spacing: 0.5px;
+    }
+    .btn-select-answer {
+      width: 100%;
+      padding: 7px;
+      background: none;
+      border: 1px solid #1a73e8;
+      border-radius: 8px;
+      color: #1a73e8;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .btn-select-answer:hover { background: #1a73e8; color: #fff; }
+    .btn-select-answer:disabled { opacity: 0.4; cursor: not-allowed; }
+
     /* 통계 모달 */
     .modal-overlay {
       display: none;
@@ -699,9 +733,12 @@
           </svg>
         </button>
       </div>
-      <div style="padding: 6px 16px 10px; display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
+      <div style="padding: 6px 16px 10px; display:flex; align-items:center; gap:6px; font-size:12px; color:#666; flex-wrap:wrap;">
         <input type="checkbox" id="graphMode" />
-        <label for="graphMode">LangGraph 모드 (관련성 판단 후 답변)</label>
+        <label for="graphMode">LangGraph 모드</label>
+        <span style="color:#ddd; margin:0 4px;">|</span>
+        <input type="checkbox" id="compareMode" />
+        <label for="compareMode">A/B 비교 모드</label>
       </div>
     </div>
   </div>
@@ -917,6 +954,7 @@
 
       const model = document.getElementById("modelSelect").value;
       const graphMode = document.getElementById("graphMode").checked;
+      const compareMode = document.getElementById("compareMode").checked;
 
       input.value = "";
       appendMessage("user", question);
@@ -924,7 +962,11 @@
       setStreaming(true);
 
       const endpoint = graphMode ? "/chat-graph-stream" : "/chat-stream";
-      await streamMessage(question, model, endpoint);
+      if (compareMode) {
+        await runComparisonMode(question, model, endpoint);
+      } else {
+        await streamMessage(question, model, endpoint);
+      }
       setStreaming(false);
       input.focus();
       loadSessionList();
@@ -1002,45 +1044,7 @@
                 div.appendChild(sourcesEl);
               }
               if (fullText) {
-                const fbRow = document.createElement("div");
-                fbRow.className = "feedback-row";
-
-                const thumbUp = document.createElement("button");
-                thumbUp.className = "btn-feedback";
-                thumbUp.dataset.rating = "1";
-                thumbUp.title = "도움됨";
-                thumbUp.textContent = "👍";
-
-                const thumbDown = document.createElement("button");
-                thumbDown.className = "btn-feedback";
-                thumbDown.dataset.rating = "-1";
-                thumbDown.title = "도움 안됨";
-                thumbDown.textContent = "👎";
-
-                const regenBtn = document.createElement("button");
-                regenBtn.className = "btn-copy";
-                regenBtn.title = "답변 재생성";
-                regenBtn.textContent = "🔄";
-                regenBtn.addEventListener("click", () => {
-                  fbRow.remove();
-                  regenerateMessage(question, model, div);
-                });
-
-                const copyBtn = document.createElement("button");
-                copyBtn.className = "btn-copy";
-                copyBtn.style.marginLeft = "auto";
-                copyBtn.textContent = "📋";
-                copyBtn.addEventListener("click", () => copyToClipboard(copyBtn, fullText));
-
-                [thumbUp, thumbDown].forEach(btn => {
-                  btn.addEventListener("click", () => submitFeedback(question, fullText, parseInt(btn.dataset.rating), fbRow));
-                });
-
-                fbRow.appendChild(thumbUp);
-                fbRow.appendChild(thumbDown);
-                fbRow.appendChild(regenBtn);
-                fbRow.appendChild(copyBtn);
-                div.appendChild(fbRow);
+                div.appendChild(createFeedbackRow(question, fullText, model, div));
               }
               messages.scrollTop = messages.scrollHeight;
             }
@@ -1053,6 +1057,180 @@
       } finally {
         abortController = null;
       }
+    }
+
+    // ── 피드백 행 헬퍼 ───────────────────────────────────────────────
+
+    function createFeedbackRow(question, fullText, model, divEl) {
+      const fbRow = document.createElement("div");
+      fbRow.className = "feedback-row";
+
+      const thumbUp = document.createElement("button");
+      thumbUp.className = "btn-feedback";
+      thumbUp.dataset.rating = "1";
+      thumbUp.title = "도움됨";
+      thumbUp.textContent = "👍";
+
+      const thumbDown = document.createElement("button");
+      thumbDown.className = "btn-feedback";
+      thumbDown.dataset.rating = "-1";
+      thumbDown.title = "도움 안됨";
+      thumbDown.textContent = "👎";
+
+      const regenBtn = document.createElement("button");
+      regenBtn.className = "btn-copy";
+      regenBtn.title = "답변 재생성";
+      regenBtn.textContent = "🔄";
+      regenBtn.addEventListener("click", () => {
+        fbRow.remove();
+        regenerateMessage(question, model, divEl);
+      });
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "btn-copy";
+      copyBtn.style.marginLeft = "auto";
+      copyBtn.textContent = "📋";
+      copyBtn.addEventListener("click", () => copyToClipboard(copyBtn, fullText));
+
+      [thumbUp, thumbDown].forEach(btn => {
+        btn.addEventListener("click", () => submitFeedback(question, fullText, parseInt(btn.dataset.rating), fbRow));
+      });
+
+      fbRow.appendChild(thumbUp);
+      fbRow.appendChild(thumbDown);
+      fbRow.appendChild(regenBtn);
+      fbRow.appendChild(copyBtn);
+      return fbRow;
+    }
+
+    // ── A/B 비교 모드 ────────────────────────────────────────────────
+
+    async function streamPreview(question, model, endpoint, bubbleEl, ctrl) {
+      const messages = document.getElementById("messages");
+      let fullText = "";
+      let isFirstToken = true;
+      const sources = [];
+
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, session_id: currentSessionId, model, preview: true }),
+          signal: ctrl.signal,
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            if (!part.startsWith("data: ")) continue;
+            const data = JSON.parse(part.slice(6));
+
+            if (data.type === "error") {
+              bubbleEl.innerHTML = `<span style="color:#ea4335">⚠️ ${data.content}</span>`;
+            } else if (data.type === "status") {
+              bubbleEl.innerHTML = `<em style="color:#999">${data.content}</em>`;
+            } else if (data.type === "token") {
+              if (isFirstToken) { bubbleEl.innerHTML = ""; isFirstToken = false; }
+              fullText += data.content;
+              bubbleEl.innerHTML = marked.parse(fullText);
+              messages.scrollTop = messages.scrollHeight;
+            } else if (data.type === "done") {
+              bubbleEl.innerHTML = marked.parse(fullText);
+              if (data.sources) sources.push(...data.sources);
+            }
+          }
+        }
+      } catch (e) {
+        if (e.name !== "AbortError") bubbleEl.innerHTML = "서버에 연결할 수 없습니다.";
+      }
+
+      return { fullText, sources };
+    }
+
+    async function runComparisonMode(question, model, endpoint) {
+      const messages = document.getElementById("messages");
+
+      const compareDiv = document.createElement("div");
+      compareDiv.className = "message bot compare-message";
+      compareDiv.innerHTML = `
+        <div class="compare-wrap">
+          <div class="compare-col">
+            <div class="compare-label">A</div>
+            <div class="bubble"><div class="thinking"><span></span><span></span><span></span></div></div>
+          </div>
+          <div class="compare-divider"></div>
+          <div class="compare-col">
+            <div class="compare-label">B</div>
+            <div class="bubble"><div class="thinking"><span></span><span></span><span></span></div></div>
+          </div>
+        </div>
+        <div class="time">${now()}</div>
+      `;
+      messages.appendChild(compareDiv);
+      messages.scrollTop = messages.scrollHeight;
+
+      const bubbles = compareDiv.querySelectorAll(".bubble");
+      const cols = compareDiv.querySelectorAll(".compare-col");
+
+      const ctrlA = new AbortController();
+      const ctrlB = new AbortController();
+      abortController = { abort: () => { ctrlA.abort(); ctrlB.abort(); } };
+
+      const [resultA, resultB] = await Promise.all([
+        streamPreview(question, model, endpoint, bubbles[0], ctrlA),
+        streamPreview(question, model, endpoint, bubbles[1], ctrlB),
+      ]);
+
+      abortController = null;
+
+      [resultA, resultB].forEach((result, i) => {
+        if (!result.fullText) return;
+        const btn = document.createElement("button");
+        btn.className = "btn-select-answer";
+        btn.textContent = "이걸로 선택";
+        btn.addEventListener("click", async () => {
+          compareDiv.querySelectorAll(".btn-select-answer").forEach(b => b.disabled = true);
+
+          await fetch("/chat/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id: currentSessionId, question, answer: result.fullText, model }),
+          });
+
+          const singleDiv = document.createElement("div");
+          singleDiv.className = "message bot";
+          const bubble = document.createElement("div");
+          bubble.className = "bubble";
+          bubble.innerHTML = marked.parse(result.fullText);
+          const timeEl = document.createElement("div");
+          timeEl.className = "time";
+          timeEl.textContent = now();
+          singleDiv.appendChild(bubble);
+          singleDiv.appendChild(timeEl);
+
+          if (result.sources.length > 0) {
+            const sourcesEl = document.createElement("div");
+            sourcesEl.className = "sources";
+            sourcesEl.innerHTML = `📄 참고: ${result.sources.map(s => `<span>${s}</span>`).join("")}`;
+            singleDiv.appendChild(sourcesEl);
+          }
+
+          singleDiv.appendChild(createFeedbackRow(question, result.fullText, model, singleDiv));
+          compareDiv.replaceWith(singleDiv);
+          loadSessionList();
+        });
+        cols[i].appendChild(btn);
+      });
     }
 
     // ── 추천 검색어 ──────────────────────────────────────────────────

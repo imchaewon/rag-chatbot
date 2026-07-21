@@ -124,6 +124,7 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     model: str = "ollama"  # ollama | groq | gemini | solar
     regenerate: bool = False
+    preview: bool = False  # True면 DB 저장 안 함 (비교 모드용)
 
 
 class ChatResponse(BaseModel):
@@ -220,9 +221,10 @@ def chat_stream(req: ChatRequest):
                     full_answer += token
                     yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
-            save_messages(req.session_id, req.question, full_answer)
+            if not req.preview:
+                save_messages(req.session_id, req.question, full_answer)
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
-            if is_first:
+            if is_first and not req.preview:
                 try:
                     save_session_title(req.session_id, generate_session_title(req.question, llm))
                 except Exception:
@@ -295,9 +297,10 @@ async def chat_graph_stream(req: ChatRequest):
                         full_answer = output.get("answer", "")
                         yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
 
-            await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
+            if not req.preview:
+                await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
-            if is_first:
+            if is_first and not req.preview:
                 try:
                     title = await asyncio.to_thread(generate_session_title, req.question, llm)
                     await asyncio.to_thread(save_session_title, req.session_id, title)
@@ -330,6 +333,26 @@ def session_history(session_id: str):
 def remove_session(session_id: str):
     delete_session(session_id)
     return {"message": f"세션 '{session_id}'이 삭제되었습니다."}
+
+
+class SaveRequest(BaseModel):
+    session_id: str
+    question: str
+    answer: str
+    model: str = "ollama"
+
+
+@app.post("/chat/save")
+def save_chat_result(req: SaveRequest):
+    is_first = len(get_history(req.session_id)) == 0
+    save_messages(req.session_id, req.question, req.answer)
+    if is_first:
+        try:
+            llm = get_llm(req.model)
+            save_session_title(req.session_id, generate_session_title(req.question, llm))
+        except Exception:
+            pass
+    return {"message": "저장 완료"}
 
 
 class TitleUpdateRequest(BaseModel):
