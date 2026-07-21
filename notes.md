@@ -1269,3 +1269,82 @@ if (fullText) {
 │   └── 답변 미리보기 (100자)
 └── 자주 묻는 질문 TOP 20
 ```
+
+---
+
+## 생각 중 물결 애니메이션
+
+### 목적
+
+스트리밍 응답 대기 중 빈 버블이 노출되는 문제 개선. Gemini처럼 점 3개가 물결치는 애니메이션으로 "생각 중" 상태를 시각적으로 표현.
+
+### 구현
+
+첫 토큰이 도착하기 전까지 버블 안에 `.thinking` 요소를 표시하고, 토큰이 오는 순간 제거.
+
+```javascript
+// 초기 버블 생성 시
+div.innerHTML = `<div class="bubble"><div class="thinking"><span></span><span></span><span></span></div></div>...`;
+
+// 첫 토큰 수신 시
+if (isFirstToken) { bubble.innerHTML = ""; isFirstToken = false; }
+```
+
+```css
+@keyframes thinking-wave {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+.thinking span { animation: thinking-wave 1.4s ease-in-out infinite; }
+.thinking span:nth-child(2) { animation-delay: 0.2s; }
+.thinking span:nth-child(3) { animation-delay: 0.4s; }
+```
+
+---
+
+## 답변 복사 / 모델 저장 / 대화 내보내기
+
+### 답변 복사 버튼 (📋)
+
+봇 버블에 마우스를 올리면 📋 버튼이 나타남. 클릭 시 마크다운 원문을 클립보드에 복사.
+스트리밍 완료 후에는 👍/👎 버튼과 같은 행 오른쪽에 표시. 히스토리 로드 시에는 hover 시에만 보임.
+
+```javascript
+function copyToClipboard(btn, text) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = "✓";
+    setTimeout(() => { btn.textContent = "📋"; }, 2000);
+  });
+}
+```
+
+### 모델 선택 localStorage 저장
+
+페이지 새로고침해도 마지막 선택한 모델 유지.
+
+```javascript
+const savedModel = localStorage.getItem("selectedModel");
+if (savedModel) modelSelect.value = savedModel;
+modelSelect.addEventListener("change", () => {
+  localStorage.setItem("selectedModel", modelSelect.value);
+});
+```
+
+### 대화 내보내기 (⬇)
+
+헤더 ⬇ 버튼 클릭 시 현재 세션 전체 대화를 `chat_날짜.txt`로 다운로드.
+기존 `/sessions/{session_id}` API를 그대로 활용. 백엔드 변경 없음.
+
+```javascript
+async function exportChat() {
+  const res = await fetch(`/sessions/${currentSessionId}`);
+  const data = await res.json();
+  const lines = ["=== MSP 운영 도우미 챗봇 대화 내보내기 ===", ...];
+  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  // a 태그로 다운로드 트리거
+}
+```
+
+### `/clear` 엔드포인트 제거
+
+초기화 버튼과 `/clear` 엔드포인트를 제거. 세션 삭제(✕)와 새 대화로 동일한 기능을 대체할 수 있어 중복이었음.
