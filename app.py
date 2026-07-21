@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title
+from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, save_feedback, get_feedback_stats
 from graph import build_graph
 
 load_dotenv()
@@ -353,6 +353,26 @@ def suggestions():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+class FeedbackRequest(BaseModel):
+    session_id: str
+    question: str
+    answer: str
+    rating: int  # 1 = 좋아요, -1 = 싫어요
+
+
+@app.post("/feedback")
+def feedback(req: FeedbackRequest):
+    if req.rating not in (1, -1):
+        raise HTTPException(status_code=400, detail="rating은 1 또는 -1이어야 합니다.")
+    save_feedback(req.session_id, req.question, req.answer, req.rating)
+    return {"message": "피드백이 저장되었습니다."}
+
+
+@app.get("/feedback/stats")
+def feedback_stats():
+    return get_feedback_stats()
 
 
 DOCS_DIR = "docs"

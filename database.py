@@ -21,6 +21,16 @@ def init_db():
                 title      TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT    NOT NULL,
+                question   TEXT    NOT NULL,
+                answer     TEXT    NOT NULL,
+                rating     INTEGER NOT NULL CHECK(rating IN (1, -1)),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
 
 
 def get_history(session_id: str) -> list:
@@ -91,6 +101,39 @@ def get_full_history(session_id: str) -> list:
             (session_id,),
         ).fetchall()
     return [{"role": row[0], "content": row[1]} for row in rows]
+
+
+def save_feedback(session_id: str, question: str, answer: str, rating: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO feedback (session_id, question, answer, rating) VALUES (?, ?, ?, ?)",
+            (session_id, question, answer, rating),
+        )
+
+
+def get_feedback_stats() -> dict:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END) as negative
+            FROM feedback
+        """).fetchone()
+        recent = conn.execute("""
+            SELECT question, answer, rating, created_at
+            FROM feedback ORDER BY id DESC LIMIT 20
+        """).fetchall()
+    total, positive, negative = row
+    return {
+        "total": total or 0,
+        "positive": positive or 0,
+        "negative": negative or 0,
+        "recent": [
+            {"question": r[0], "answer": r[1], "rating": r[2], "created_at": r[3]}
+            for r in recent
+        ],
+    }
 
 
 def get_question_stats(limit: int = 20) -> list:

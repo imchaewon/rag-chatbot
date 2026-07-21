@@ -1158,6 +1158,7 @@ with warnings.catch_warnings():
 sources = list({os.path.basename(doc.metadata.get("source", ""))
                 for doc, score in docs_with_scores
                 if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")})
+```
 
 ---
 
@@ -1197,4 +1198,74 @@ function stopStreaming() {
 스트리밍 시작 → 전송 버튼 비활성화 + 빨간 ■ 버튼 등장
 ■ 클릭       → fetch 즉시 취소, 서버 스트림 자동 중단
 완료 또는 취소 → ■ 버튼 사라짐, 전송 버튼 복귀
+```
+
+---
+
+## 👍/👎 피드백 기능
+
+### 목적
+
+사용자가 답변 품질을 직접 평가하게 해서, 어떤 답변이 부족했는지 파악하고 문서나 프롬프트 개선에 활용.
+
+ChatGPT 같은 서비스는 피드백 데이터로 RLHF(인간 피드백 강화학습)를 수행하지만, 이 규모에서는 **👎 받은 질문/답변 목록을 사람이 직접 검토**해서 문서를 보강하는 방식이 실용적.
+
+### DB — feedback 테이블
+
+```sql
+CREATE TABLE feedback (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT    NOT NULL,
+    question   TEXT    NOT NULL,
+    answer     TEXT    NOT NULL,
+    rating     INTEGER NOT NULL CHECK(rating IN (1, -1)),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+`rating`: 1 = 👍, -1 = 👎
+
+### 백엔드 — app.py
+
+```python
+POST /feedback        → { session_id, question, answer, rating } → DB 저장
+GET  /feedback/stats  → { total, positive, negative, recent[] }
+```
+
+`get_feedback_stats()`는 집계(total/positive/negative)와 최근 20건 목록을 함께 반환.
+
+### 프론트엔드
+
+스트리밍 완료(`done` 이벤트) 후, 오류가 아닌 정상 답변에만 버튼 추가.
+
+```javascript
+if (fullText) {
+    const fbRow = document.createElement("div");
+    fbRow.innerHTML = `
+        <button class="btn-feedback" data-rating="1">👍</button>
+        <button class="btn-feedback" data-rating="-1">👎</button>
+    `;
+    fbRow.querySelectorAll(".btn-feedback").forEach(btn => {
+        btn.addEventListener("click", () =>
+            submitFeedback(question, fullText, parseInt(btn.dataset.rating), fbRow));
+    });
+    div.appendChild(fbRow);
+}
+```
+
+클릭 시 두 버튼 모두 비활성화 → 중복 제출 방지.
+선택된 버튼만 색상 변경 (👍 초록 / 👎 빨강).
+
+### 📊 통계 모달에서 활용
+
+피드백 요약(👍 N / 👎 N) + **👎 받은 답변 목록**을 붉은 카드로 표시.
+이 목록을 보고 관련 문서를 `docs/`에 추가하거나 프롬프트를 수정.
+
+```
+📊 모달 구성:
+├── 피드백 요약: 👍 5 / 👎 2
+├── 👎 받은 답변 카드 목록
+│   ├── Q. 질문 텍스트
+│   └── 답변 미리보기 (100자)
+└── 자주 묻는 질문 TOP 20
 ```

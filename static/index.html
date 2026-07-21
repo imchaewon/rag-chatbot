@@ -365,6 +365,28 @@
     .bubble pre code { background: none; padding: 0; }
     .bubble strong { font-weight: 600; }
 
+    /* 피드백 버튼 */
+    .feedback-row {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+      padding: 0 4px;
+    }
+    .btn-feedback {
+      background: none;
+      border: 1px solid #e0e0e0;
+      border-radius: 12px;
+      padding: 2px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      color: #9aa0a6;
+      line-height: 1.4;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .btn-feedback:hover { background: #f1f3f4; color: #202124; border-color: #bbb; }
+    .btn-feedback.active-up { background: #e8f5e9; border-color: #4caf50; color: #2e7d32; }
+    .btn-feedback.active-down { background: #fce4ec; border-color: #e91e63; color: #880e4f; }
+
     /* 소스 문서 표시 */
     .sources {
       font-size: 11px;
@@ -727,6 +749,18 @@
                 sourcesEl.innerHTML = `📄 참고: ${data.sources.map(s => `<span>${s}</span>`).join("")}`;
                 div.appendChild(sourcesEl);
               }
+              if (fullText) {
+                const fbRow = document.createElement("div");
+                fbRow.className = "feedback-row";
+                fbRow.innerHTML = `
+                  <button class="btn-feedback" data-rating="1" title="도움됨">👍</button>
+                  <button class="btn-feedback" data-rating="-1" title="도움 안됨">👎</button>
+                `;
+                fbRow.querySelectorAll(".btn-feedback").forEach(btn => {
+                  btn.addEventListener("click", () => submitFeedback(question, fullText, parseInt(btn.dataset.rating), fbRow));
+                });
+                div.appendChild(fbRow);
+              }
               messages.scrollTop = messages.scrollHeight;
             }
           }
@@ -765,20 +799,47 @@
       modal.style.display = "flex";
       list.innerHTML = `<p style="color:#9aa0a6; font-size:13px; text-align:center; padding:20px">로딩 중...</p>`;
 
-      const res = await fetch("/stats");
-      const data = await res.json();
+      const [statsRes, fbRes] = await Promise.all([fetch("/stats"), fetch("/feedback/stats")]);
+      const data = await statsRes.json();
+      const fb = await fbRes.json();
 
-      if (data.questions.length === 0) {
-        list.innerHTML = `<p style="color:#9aa0a6; font-size:13px; text-align:center; padding:20px">아직 질문 기록이 없습니다.</p>`;
-        return;
+      let html = "";
+
+      // 👎 받은 답변 섹션
+      const negatives = fb.recent.filter(r => r.rating === -1);
+      html += `<div style="font-size:12px;color:#9aa0a6;margin-bottom:6px;">`;
+      if (fb.total > 0) {
+        html += `피드백 👍 ${fb.positive} &nbsp; 👎 ${fb.negative}`;
+      } else {
+        html += `피드백 없음`;
+      }
+      html += `</div>`;
+
+      if (negatives.length > 0) {
+        html += negatives.map(r => `
+          <div style="background:#fff5f5;border:1px solid #fce4ec;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+            <div style="font-size:12px;font-weight:600;color:#202124;margin-bottom:4px;">Q. ${r.question.length > 60 ? r.question.slice(0, 60) + "…" : r.question}</div>
+            <div style="font-size:11px;color:#888;line-height:1.5;">${r.answer.length > 100 ? r.answer.slice(0, 100) + "…" : r.answer}</div>
+          </div>
+        `).join("");
+      } else {
+        html += `<p style="color:#9aa0a6;font-size:12px;padding:8px 0 16px">👎 받은 답변이 없습니다.</p>`;
       }
 
-      list.innerHTML = data.questions.map((q, i) => `
-        <div class="stat-item">
-          <span class="stat-question">${i + 1}. ${q.question.length > 45 ? q.question.slice(0, 45) + "…" : q.question}</span>
-          <span class="stat-count">${q.count}회</span>
-        </div>
-      `).join("");
+      // 자주 묻는 질문 섹션
+      html += `<div style="font-size:12px;color:#9aa0a6;margin:10px 0 6px;padding-top:10px;border-top:1px solid #f1f3f4;">자주 묻는 질문 TOP 20</div>`;
+      if (data.questions.length === 0) {
+        html += `<p style="color:#9aa0a6; font-size:13px; text-align:center; padding:12px">아직 질문 기록이 없습니다.</p>`;
+      } else {
+        html += data.questions.map((q, i) => `
+          <div class="stat-item">
+            <span class="stat-question">${i + 1}. ${q.question.length > 45 ? q.question.slice(0, 45) + "…" : q.question}</span>
+            <span class="stat-count">${q.count}회</span>
+          </div>
+        `).join("");
+      }
+
+      list.innerHTML = html;
     }
 
     function hideStats(e) {
@@ -870,6 +931,27 @@
     async function deleteDocument(filename) {
       await fetch(`/documents/${encodeURIComponent(filename)}`, { method: "DELETE" });
       loadDocList();
+    }
+
+    // ── 피드백 ───────────────────────────────────────────────────────
+
+    async function submitFeedback(question, answer, rating, rowEl) {
+      rowEl.querySelectorAll(".btn-feedback").forEach(b => b.disabled = true);
+      try {
+        await fetch("/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: currentSessionId, question, answer, rating }),
+        });
+        rowEl.querySelectorAll(".btn-feedback").forEach(b => {
+          b.classList.remove("active-up", "active-down");
+          if (parseInt(b.dataset.rating) === rating) {
+            b.classList.add(rating === 1 ? "active-up" : "active-down");
+          }
+        });
+      } catch (e) {
+        rowEl.querySelectorAll(".btn-feedback").forEach(b => b.disabled = false);
+      }
     }
 
     // ── 초기 로드 ─────────────────────────────────────────────────────
