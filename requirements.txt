@@ -161,3 +161,4 @@ xlsxwriter==3.2.9
 xxhash==3.8.1
 yarl==1.24.2
 zstandard==0.25.0
+python-multipart==0.0.32

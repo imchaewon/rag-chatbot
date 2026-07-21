@@ -107,6 +107,66 @@
       text-align: center;
     }
 
+    /* 문서 관리 패널 */
+    .doc-panel {
+      border-top: 1px solid rgba(255,255,255,0.08);
+      flex-shrink: 0;
+    }
+    .doc-panel-header {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #888;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
+      transition: color 0.15s;
+    }
+    .doc-panel-header:hover { color: #ccc; }
+    .doc-panel-header .doc-panel-arrow { font-size: 10px; transition: transform 0.2s; }
+    .doc-panel-header.open .doc-panel-arrow { transform: rotate(180deg); }
+    .doc-panel-body { display: none; padding: 0 8px 8px; }
+    .doc-panel-body.open { display: block; }
+    .doc-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 6px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #aaa;
+    }
+    .doc-item:hover { background: rgba(255,255,255,0.06); }
+    .doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .btn-delete-doc {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      color: transparent;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 1px 3px;
+      border-radius: 3px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .doc-item:hover .btn-delete-doc { color: #666; }
+    .btn-delete-doc:hover { color: #fff !important; background: rgba(255,255,255,0.15); }
+    .btn-upload-doc {
+      width: 100%;
+      margin-top: 6px;
+      background: rgba(255,255,255,0.06);
+      border: 1px dashed rgba(255,255,255,0.2);
+      color: #888;
+      padding: 7px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.15s, color 0.15s;
+    }
+    .btn-upload-doc:hover { background: rgba(255,255,255,0.12); color: #ccc; }
+
     /* 채팅 영역 */
     .chat-container {
       flex: 1;
@@ -418,6 +478,19 @@
         <button class="btn-new-chat" onclick="newChat()">✏️ 새 대화</button>
       </div>
       <div class="session-list" id="sessionList"></div>
+      <div class="doc-panel">
+        <div class="doc-panel-header" id="docPanelHeader" onclick="toggleDocPanel()">
+          <span>📁 문서 관리</span>
+          <span class="doc-panel-arrow">▼</span>
+        </div>
+        <div class="doc-panel-body" id="docPanelBody">
+          <div id="docList"></div>
+          <button class="btn-upload-doc" onclick="document.getElementById('fileInput').click()">
+            + txt / pdf 업로드
+          </button>
+          <input type="file" id="fileInput" accept=".txt,.pdf" style="display:none" onchange="uploadDocument(this)" />
+        </div>
+      </div>
     </div>
 
     <!-- 채팅 영역 -->
@@ -741,6 +814,62 @@
         </div>
       `;
       loadSessionList();
+    }
+
+    // ── 문서 관리 ─────────────────────────────────────────────────────
+
+    function toggleDocPanel() {
+      const header = document.getElementById("docPanelHeader");
+      const body = document.getElementById("docPanelBody");
+      header.classList.toggle("open");
+      body.classList.toggle("open");
+      if (body.classList.contains("open")) loadDocList();
+    }
+
+    async function loadDocList() {
+      const res = await fetch("/documents");
+      const data = await res.json();
+      const list = document.getElementById("docList");
+      if (data.documents.length === 0) {
+        list.innerHTML = `<div style="font-size:11px;color:#555;padding:4px 6px">인덱싱된 문서 없음</div>`;
+        return;
+      }
+      list.innerHTML = data.documents.map(name => `
+        <div class="doc-item">
+          <span class="doc-name" title="${name}">📄 ${name}</span>
+          <button class="btn-delete-doc" onclick="deleteDocument('${name}')" title="삭제">✕</button>
+        </div>
+      `).join("");
+    }
+
+    async function uploadDocument(input) {
+      const file = input.files[0];
+      if (!file) return;
+      input.value = "";
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const btn = document.querySelector(".btn-upload-doc");
+      btn.textContent = "업로드 중...";
+      btn.disabled = true;
+
+      try {
+        const res = await fetch("/documents", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail);
+        btn.textContent = "✓ " + data.message;
+        setTimeout(() => { btn.textContent = "+ txt / pdf 업로드"; btn.disabled = false; }, 2000);
+        loadDocList();
+      } catch (e) {
+        btn.textContent = "⚠️ " + e.message;
+        setTimeout(() => { btn.textContent = "+ txt / pdf 업로드"; btn.disabled = false; }, 3000);
+      }
+    }
+
+    async function deleteDocument(filename) {
+      await fetch(`/documents/${encodeURIComponent(filename)}`, { method: "DELETE" });
+      loadDocList();
     }
 
     // ── 초기 로드 ─────────────────────────────────────────────────────

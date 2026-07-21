@@ -4,7 +4,7 @@ import os
 import warnings
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 import json
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,8 @@ from langchain_upstage import UpstageEmbeddings, ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from database import init_db, get_history, save_messages, clear_history, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title
 from graph import build_graph
 
@@ -351,3 +353,56 @@ def suggestions():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+DOCS_DIR = "docs"
+ALLOWED_EXTENSIONS = {".txt", ".pdf"}
+CHUNK_SIZE = 200
+CHUNK_OVERLAP = 50
+
+
+@app.get("/documents")
+def list_documents():
+    results = vectorstore._collection.get(include=["metadatas"])
+    sources = sorted({
+        os.path.basename(m.get("source", ""))
+        for m in results["metadatas"] if m.get("source")
+    })
+    return {"documents": sources}
+
+
+@app.post("/documents")
+async def upload_document(file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="txt 또는 pdf 파일만 업로드 가능합니다.")
+
+    save_path = os.path.join(DOCS_DIR, file.filename)
+    content = await file.read()
+    with open(save_path, "wb") as f:
+        f.write(content)
+
+    loader = PyPDFLoader(save_path) if ext == ".pdf" else TextLoader(save_path, encoding="utf-8")
+    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+    chunks = splitter.split_documents(loader.load())
+    vectorstore.add_documents(chunks)
+
+    return {"message": f"'{file.filename}' 인덱싱 완료", "chunks": len(chunks)}
+
+
+@app.delete("/documents/{filename}")
+def delete_document(filename: str):
+    all_results = vectorstore._collection.get(include=["metadatas"])
+    ids_to_delete = [
+        all_results["ids"][i]
+        for i, m in enumerate(all_results["metadatas"])
+        if os.path.basename(m.get("source", "")) == filename
+    ]
+    if ids_to_delete:
+        vectorstore._collection.delete(ids=ids_to_delete)
+
+    file_path = os.path.join(DOCS_DIR, filename)
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+    return {"message": f"'{filename}' 삭제 완료", "chunks_removed": len(ids_to_delete)}
