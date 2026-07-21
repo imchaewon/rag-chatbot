@@ -1034,6 +1034,64 @@ yield f"data: {json.dumps({'type': 'done', ...})}\n\n"
 
 ---
 
+## 문서 업로드 / 삭제 / 목록
+
+### 목적
+
+지금까지는 문서를 추가하려면 `docs/` 폴더에 파일을 직접 넣고 `ingest.py`를 터미널에서 실행해야 했음.
+웹 UI에서 바로 업로드/삭제할 수 있게 해서 서버 접근 없이 문서를 관리 가능하게 함.
+
+### 지원 형식
+
+`.txt`, `.pdf` (PyPDFLoader 사용)
+
+### 백엔드 엔드포인트 — app.py
+
+```python
+GET    /documents              → 현재 벡터DB에 인덱싱된 문서 목록
+POST   /documents              → 파일 업로드 → docs/ 저장 → 청크 분할 → vectorstore.add_documents()
+DELETE /documents/{filename}   → 벡터DB에서 해당 파일 청크 전체 삭제 + 파일 삭제
+```
+
+### 업로드 흐름
+
+```python
+# 파일 저장
+with open(os.path.join("docs", file.filename), "wb") as f:
+    f.write(await file.read())
+
+# 로더 선택
+loader = PyPDFLoader(path) if ext == ".pdf" else TextLoader(path, encoding="utf-8")
+
+# 청크 분할 후 기존 vectorstore에 추가 (서버 재시작 불필요)
+chunks = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=50).split_documents(loader.load())
+vectorstore.add_documents(chunks)
+```
+
+### 삭제 흐름
+
+```python
+# 메타데이터에서 source basename이 일치하는 청크 ID 수집
+ids = [id for id, m in zip(ids, metadatas) if basename(m["source"]) == filename]
+vectorstore._collection.delete(ids=ids)
+os.remove(os.path.join("docs", filename))
+```
+
+### 프론트엔드 — 사이드바 하단 문서 관리 패널
+
+- **📁 문서 관리** 토글 클릭 → 현재 인덱싱된 문서 목록 표시
+- **+ txt / pdf 업로드** 버튼 → 파일 선택 → 업로드 중 표시 → 완료 메시지
+- 각 문서 오른쪽 ✕ → 벡터DB + 파일 동시 삭제
+- 서버 재시작 없이 실시간 반영
+
+### 의존성 추가
+
+```bash
+pip install python-multipart  # FastAPI 파일 업로드에 필요
+```
+
+---
+
 ## API 오류 처리
 
 ### 문제
