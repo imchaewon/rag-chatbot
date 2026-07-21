@@ -1510,3 +1510,90 @@ function startEditTitle(titleEl, sessionId) {
   });
 }
 ```
+
+---
+
+## 세션 ⋮ 메뉴 (이름 변경 / 고정 / 삭제)
+
+### 목적
+
+기존 ✕ 삭제 버튼을 ⋮ 메뉴로 교체해 이름 변경·고정·삭제를 한 곳에서 처리.
+고정된 세션은 목록 최상단에 📌 아이콘과 함께 표시됨.
+
+### DB — session_pins 테이블
+
+```sql
+CREATE TABLE IF NOT EXISTS session_pins (
+    session_id TEXT PRIMARY KEY
+)
+```
+
+`get_sessions()`에서 `LEFT JOIN session_pins`로 고정 여부를 조회하고 `ORDER BY pinned DESC, last_active DESC`로 정렬.
+
+```python
+def pin_session(session_id: str):
+    conn.execute("INSERT OR IGNORE INTO session_pins (session_id) VALUES (?)", ...)
+
+def unpin_session(session_id: str):
+    conn.execute("DELETE FROM session_pins WHERE session_id = ?", ...)
+```
+
+### 백엔드 — app.py
+
+```python
+@app.patch("/sessions/{session_id}/pin")
+def toggle_pin(session_id: str):
+    current = next((s for s in get_sessions() if s["session_id"] == session_id), None)
+    if current and current["pinned"]:
+        unpin_session(session_id)
+        return {"pinned": False}
+    pin_session(session_id)
+    return {"pinned": True}
+```
+
+### 프론트엔드 — index.html
+
+세션 항목 HTML 구조:
+
+```html
+<div class="session-item" data-sid="..." data-fulltitle="..." data-pinned="0|1">
+  <span class="session-title">📌 제목</span>
+  <button class="btn-session-menu">⋮</button>
+  <div class="session-dropdown">
+    <button class="dropdown-item" data-action="rename">이름 변경</button>
+    <button class="dropdown-item" data-action="pin">고정 / 고정 해제</button>
+    <button class="dropdown-item danger" data-action="delete">삭제</button>
+  </div>
+</div>
+```
+
+드롭다운 동작:
+
+```javascript
+// ⋮ 클릭 → 해당 드롭다운 토글 (다른 열린 드롭다운은 닫음)
+btn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const isOpen = dropdown.classList.contains("open");
+  closeAllDropdowns();
+  if (!isOpen) { dropdown.classList.add("open"); btn.classList.add("active"); }
+});
+
+// 메뉴 항목 클릭 → 액션 실행
+item.addEventListener("click", (e) => {
+  e.stopPropagation();
+  closeAllDropdowns();
+  if (action === "rename") startEditTitle(titleEl, sid);
+  else if (action === "pin") togglePin(sid);
+  else if (action === "delete") deleteSession(sid);
+});
+
+// 바깥 클릭 → 모두 닫기
+document.addEventListener("click", closeAllDropdowns);
+
+async function togglePin(sessionId) {
+  await fetch(`/sessions/${sessionId}/pin`, { method: "PATCH" });
+  loadSessionList();
+}
+```
+
+`.session-item`에 `position: relative` 필요 — 드롭다운이 `position: absolute`로 항목 기준 위치 잡음.
