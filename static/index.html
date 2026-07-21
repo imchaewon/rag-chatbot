@@ -750,8 +750,19 @@
 
     let currentSessionId = "session_" + Math.random().toString(36).slice(2, 9);
     let abortController = null;
+    let userScrolled = false;
 
     document.getElementById("initTime").textContent = now();
+
+    const messagesEl = document.getElementById("messages");
+    messagesEl.addEventListener("scroll", () => {
+      const atBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40;
+      userScrolled = !atBottom;
+    });
+
+    function autoScroll() {
+      if (!userScrolled) messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
 
     function now() {
       return new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
@@ -861,6 +872,7 @@
       data.history.forEach(msg => {
         appendMessage(msg.role === "human" ? "user" : "bot", msg.content, "");
       });
+      userScrolled = false;
       messages.scrollTop = messages.scrollHeight;
 
       document.getElementById("suggestions").style.display = "none";
@@ -959,6 +971,7 @@
       const compareMode = document.getElementById("compareMode").checked;
 
       input.value = "";
+      userScrolled = false;
       appendMessage("user", question);
       document.getElementById("suggestions").style.display = "none";
       setStreaming(true);
@@ -1036,7 +1049,7 @@
               if (isFirstToken) { bubble.innerHTML = ""; isFirstToken = false; }
               fullText += data.content;
               bubble.innerHTML = marked.parse(fullText);
-              messages.scrollTop = messages.scrollHeight;
+              autoScroll();
             } else if (data.type === "done") {
               bubble.innerHTML = marked.parse(fullText);
               if (data.sources && data.sources.length > 0) {
@@ -1048,7 +1061,7 @@
               if (fullText) {
                 div.appendChild(createFeedbackRow(question, fullText, model, div));
               }
-              messages.scrollTop = messages.scrollHeight;
+              autoScroll();
             }
           }
         }
@@ -1168,7 +1181,7 @@
               if (firstToken[idx]) { bubbles[idx].innerHTML = ""; firstToken[idx] = false; }
               fullText[idx] += data.content;
               bubbles[idx].innerHTML = marked.parse(fullText[idx]);
-              messages.scrollTop = messages.scrollHeight;
+              autoScroll();
             } else if (idx >= 0 && data.type.startsWith("error_")) {
               bubbles[idx].innerHTML = `<span style="color:#ea4335">⚠️ ${data.content}</span>`;
             } else if (data.type === "done") {
