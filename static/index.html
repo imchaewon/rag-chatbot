@@ -112,7 +112,7 @@
     .btn-session-menu.active .icon-menu { color: #fff; }
 
     /* 📌 : 고정 세션에서만 표시, 호버 시 숨김 */
-    .icon-pin { display: none; font-size: 13px; }
+    .icon-pin { display: none; color: rgba(255,255,255,0.65); }
     .session-item[data-pinned="1"] .icon-pin { display: inline; }
     .session-item[data-pinned="1"] .icon-menu { display: none; }
     .session-item[data-pinned="1"]:hover .icon-pin { display: none; }
@@ -738,7 +738,7 @@
           <div class="session-item${active}" data-sid="${s.session_id}" data-fulltitle="${fullTitle}" data-pinned="${s.pinned ? '1' : '0'}">
             <span class="session-title" title="더블클릭하여 제목 편집">${title}</span>
             <button class="btn-session-menu" title="옵션">
-              <span class="icon-pin">📌</span><span class="icon-menu">⋮</span>
+              <span class="icon-pin"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></span><span class="icon-menu">⋮</span>
             </button>
             <div class="session-dropdown">
               <button class="dropdown-item" data-action="rename">이름 변경</button>
