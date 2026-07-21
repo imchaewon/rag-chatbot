@@ -963,7 +963,7 @@
 
       const endpoint = graphMode ? "/chat-graph-stream" : "/chat-stream";
       if (compareMode) {
-        await runComparisonMode(question, model, endpoint);
+        await runComparisonMode(question, model);
       } else {
         await streamMessage(question, model, endpoint);
       }
@@ -1105,59 +1105,7 @@
 
     // ── A/B 비교 모드 ────────────────────────────────────────────────
 
-    async function streamPreview(question, model, endpoint, bubbleEl, ctrl) {
-      const messages = document.getElementById("messages");
-      let fullText = "";
-      let isFirstToken = true;
-      const sources = [];
-
-      try {
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, session_id: currentSessionId, model, preview: true }),
-          signal: ctrl.signal,
-        });
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop();
-
-          for (const part of parts) {
-            if (!part.startsWith("data: ")) continue;
-            const data = JSON.parse(part.slice(6));
-
-            if (data.type === "error") {
-              bubbleEl.innerHTML = `<span style="color:#ea4335">⚠️ ${data.content}</span>`;
-            } else if (data.type === "status") {
-              bubbleEl.innerHTML = `<em style="color:#999">${data.content}</em>`;
-            } else if (data.type === "token") {
-              if (isFirstToken) { bubbleEl.innerHTML = ""; isFirstToken = false; }
-              fullText += data.content;
-              bubbleEl.innerHTML = marked.parse(fullText);
-              messages.scrollTop = messages.scrollHeight;
-            } else if (data.type === "done") {
-              bubbleEl.innerHTML = marked.parse(fullText);
-              if (data.sources) sources.push(...data.sources);
-            }
-          }
-        }
-      } catch (e) {
-        if (e.name !== "AbortError") bubbleEl.innerHTML = "서버에 연결할 수 없습니다.";
-      }
-
-      return { fullText, sources };
-    }
-
-    async function runComparisonMode(question, model, endpoint) {
+    async function runComparisonMode(question, model) {
       const messages = document.getElementById("messages");
 
       const compareDiv = document.createElement("div");
@@ -1182,19 +1130,61 @@
       const bubbles = compareDiv.querySelectorAll(".bubble");
       const cols = compareDiv.querySelectorAll(".compare-col");
 
-      const ctrlA = new AbortController();
-      const ctrlB = new AbortController();
-      abortController = { abort: () => { ctrlA.abort(); ctrlB.abort(); } };
+      const ctrl = new AbortController();
+      abortController = ctrl;
 
-      const [resultA, resultB] = await Promise.all([
-        streamPreview(question, model, endpoint, bubbles[0], ctrlA),
-        streamPreview(question, model, endpoint, bubbles[1], ctrlB),
-      ]);
+      const fullText = ["", ""];
+      const sources = [];
+      const firstToken = [true, true];
+
+      try {
+        const res = await fetch("/chat-compare-stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, session_id: currentSessionId, model }),
+          signal: ctrl.signal,
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            if (!part.startsWith("data: ")) continue;
+            const data = JSON.parse(part.slice(6));
+            const idx = data.type.endsWith("_a") ? 0 : data.type.endsWith("_b") ? 1 : -1;
+
+            if (idx >= 0 && data.type.startsWith("token_")) {
+              if (firstToken[idx]) { bubbles[idx].innerHTML = ""; firstToken[idx] = false; }
+              fullText[idx] += data.content;
+              bubbles[idx].innerHTML = marked.parse(fullText[idx]);
+              messages.scrollTop = messages.scrollHeight;
+            } else if (idx >= 0 && data.type.startsWith("error_")) {
+              bubbles[idx].innerHTML = `<span style="color:#ea4335">⚠️ ${data.content}</span>`;
+            } else if (data.type === "done") {
+              if (data.sources) sources.push(...data.sources);
+            }
+          }
+        }
+      } catch (e) {
+        if (e.name !== "AbortError") {
+          bubbles[0].innerHTML = "서버에 연결할 수 없습니다.";
+          bubbles[1].innerHTML = "서버에 연결할 수 없습니다.";
+        }
+      }
 
       abortController = null;
 
-      [resultA, resultB].forEach((result, i) => {
-        if (!result.fullText) return;
+      [0, 1].forEach(i => {
+        if (!fullText[i]) return;
         const btn = document.createElement("button");
         btn.className = "btn-select-answer";
         btn.textContent = "이걸로 선택";
@@ -1204,28 +1194,28 @@
           await fetch("/chat/save", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session_id: currentSessionId, question, answer: result.fullText, model }),
+            body: JSON.stringify({ session_id: currentSessionId, question, answer: fullText[i], model }),
           });
 
           const singleDiv = document.createElement("div");
           singleDiv.className = "message bot";
           const bubble = document.createElement("div");
           bubble.className = "bubble";
-          bubble.innerHTML = marked.parse(result.fullText);
+          bubble.innerHTML = marked.parse(fullText[i]);
           const timeEl = document.createElement("div");
           timeEl.className = "time";
           timeEl.textContent = now();
           singleDiv.appendChild(bubble);
           singleDiv.appendChild(timeEl);
 
-          if (result.sources.length > 0) {
+          if (sources.length > 0) {
             const sourcesEl = document.createElement("div");
             sourcesEl.className = "sources";
-            sourcesEl.innerHTML = `📄 참고: ${result.sources.map(s => `<span>${s}</span>`).join("")}`;
+            sourcesEl.innerHTML = `📄 참고: ${sources.map(s => `<span>${s}</span>`).join("")}`;
             singleDiv.appendChild(sourcesEl);
           }
 
-          singleDiv.appendChild(createFeedbackRow(question, result.fullText, model, singleDiv));
+          singleDiv.appendChild(createFeedbackRow(question, fullText[i], model, singleDiv));
           compareDiv.replaceWith(singleDiv);
           loadSessionList();
         });

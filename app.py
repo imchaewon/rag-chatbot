@@ -318,6 +318,56 @@ async def chat_graph_stream(req: ChatRequest):
     )
 
 
+@app.post("/chat-compare-stream")
+async def chat_compare_stream(req: ChatRequest):
+    async def event_generator():
+        history = await asyncio.to_thread(get_history, req.session_id)
+        docs_with_scores = await asyncio.to_thread(
+            vectorstore.similarity_search_with_relevance_scores, req.question, k=4
+        )
+        docs = [doc for doc, _ in docs_with_scores]
+        context = "\n".join([doc.page_content for doc in docs])
+        sources = list({
+            os.path.basename(doc.metadata.get("source", ""))
+            for doc, score in docs_with_scores
+            if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")
+        })
+        chain_input = {"context": context, "question": req.question, "chat_history": history}
+
+        combined: asyncio.Queue = asyncio.Queue()
+
+        async def relay(label: str):
+            try:
+                async for chunk in (prompt | get_llm(req.model)).astream(chain_input):
+                    if chunk.content:
+                        await combined.put((label, chunk.content))
+            except Exception as e:
+                await combined.put((label, {"error": _api_error_message(e)}))
+            finally:
+                await combined.put((label, None))
+
+        task_a = asyncio.create_task(relay("a"))
+        task_b = asyncio.create_task(relay("b"))
+
+        done = 0
+        while done < 2:
+            label, token = await combined.get()
+            if token is None:
+                done += 1
+            elif isinstance(token, dict):
+                yield f"data: {json.dumps({'type': f'error_{label}', 'content': token['error']}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': f'token_{label}', 'content': token}, ensure_ascii=False)}\n\n"
+
+        await asyncio.gather(task_a, task_b, return_exceptions=True)
+        yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 
 @app.get("/sessions")
 def list_sessions():
