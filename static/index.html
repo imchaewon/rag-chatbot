@@ -365,6 +365,28 @@
     .bubble pre code { background: none; padding: 0; }
     .bubble strong { font-weight: 600; }
 
+    /* 복사 버튼 */
+    .message-actions {
+      display: flex;
+      gap: 4px;
+      margin-top: 3px;
+      padding: 0 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .message.bot:hover .message-actions { opacity: 1; }
+    .btn-copy {
+      background: none;
+      border: 1px solid #e0e0e0;
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      color: #9aa0a6;
+      transition: background 0.15s, color 0.15s;
+    }
+    .btn-copy:hover { background: #f1f3f4; color: #202124; border-color: #bbb; }
+
     /* 피드백 버튼 */
     .feedback-row {
       display: flex;
@@ -535,6 +557,7 @@
             <option value="solar">Solar Pro</option>
           </select>
           <button class="btn-clear" onclick="showStats()">📊</button>
+          <button class="btn-clear" onclick="exportChat()" title="대화 내보내기">⬇</button>
           <button class="btn-clear" onclick="clearHistory()">초기화</button>
         </div>
       </div>
@@ -662,6 +685,16 @@
       div.className = `message ${role}`;
       const content = role === "bot" ? marked.parse(text) : text.replace(/\n/g, "<br>");
       div.innerHTML = `<div class="bubble">${content}</div><div class="time">${time}</div>`;
+      if (role === "bot" && text) {
+        const actionsEl = document.createElement("div");
+        actionsEl.className = "message-actions";
+        const copyBtn = document.createElement("button");
+        copyBtn.className = "btn-copy";
+        copyBtn.textContent = "📋 복사";
+        copyBtn.addEventListener("click", () => copyToClipboard(copyBtn, text));
+        actionsEl.appendChild(copyBtn);
+        div.appendChild(actionsEl);
+      }
       messages.appendChild(div);
       messages.scrollTop = messages.scrollHeight;
       return div;
@@ -743,6 +776,16 @@
               messages.scrollTop = messages.scrollHeight;
             } else if (data.type === "done") {
               bubble.innerHTML = marked.parse(fullText);
+              if (fullText) {
+                const actionsEl = document.createElement("div");
+                actionsEl.className = "message-actions";
+                const copyBtn = document.createElement("button");
+                copyBtn.className = "btn-copy";
+                copyBtn.textContent = "📋 복사";
+                copyBtn.addEventListener("click", () => copyToClipboard(copyBtn, fullText));
+                actionsEl.appendChild(copyBtn);
+                div.appendChild(actionsEl);
+              }
               if (data.sources && data.sources.length > 0) {
                 const sourcesEl = document.createElement("div");
                 sourcesEl.className = "sources";
@@ -933,6 +976,42 @@
       loadDocList();
     }
 
+    // ── 복사 ─────────────────────────────────────────────────────────
+
+    function copyToClipboard(btn, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = "✓ 복사됨";
+        setTimeout(() => { btn.textContent = "📋 복사"; }, 2000);
+      });
+    }
+
+    // ── 대화 내보내기 ─────────────────────────────────────────────────
+
+    async function exportChat() {
+      const res = await fetch(`/sessions/${currentSessionId}`);
+      const data = await res.json();
+      if (!data.history || data.history.length === 0) return;
+
+      const lines = [
+        "=== MSP 운영 도우미 챗봇 대화 내보내기 ===",
+        `날짜: ${new Date().toLocaleString("ko-KR")}`,
+        "",
+      ];
+      data.history.forEach(msg => {
+        lines.push(msg.role === "human" ? "[사용자]" : "[챗봇]");
+        lines.push(msg.content);
+        lines.push("");
+      });
+
+      const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `chat_${new Date().toISOString().slice(0, 10)}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
     // ── 피드백 ───────────────────────────────────────────────────────
 
     async function submitFeedback(question, answer, rating, rowEl) {
@@ -955,6 +1034,15 @@
     }
 
     // ── 초기 로드 ─────────────────────────────────────────────────────
+
+    // 마지막 선택 모델 복원
+    const modelSelect = document.getElementById("modelSelect");
+    const savedModel = localStorage.getItem("selectedModel");
+    if (savedModel) modelSelect.value = savedModel;
+    modelSelect.addEventListener("change", () => {
+      localStorage.setItem("selectedModel", modelSelect.value);
+    });
+
     loadSuggestions();
     loadSessionList();
   </script>
