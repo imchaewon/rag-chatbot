@@ -25,7 +25,7 @@ from graph import build_graph
 load_dotenv()
 
 # 앱 시작 시 한 번만 로드
-SOURCE_SCORE_THRESHOLD = 0.5  # 이 점수 미만인 문서는 출처에 표시하지 않음
+SOURCE_SCORE_THRESHOLD = 0.3  # bge-m3 기준 최고 점수가 0.5 수준이므로 0.3으로 설정
 
 
 @asynccontextmanager
@@ -129,6 +129,7 @@ class ChatRequest(BaseModel):
     model: str = "ollama"  # ollama | groq | gemini | solar
     regenerate: bool = False
     preview: bool = False  # True면 DB 저장 안 함 (비교 모드용)
+    score_threshold: float = SOURCE_SCORE_THRESHOLD
 
 
 class ChatResponse(BaseModel):
@@ -208,21 +209,25 @@ def chat_stream(req: ChatRequest):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 docs_with_scores = vectorstore.similarity_search_with_relevance_scores(req.question, k=4)
-            docs = [doc for doc, score in docs_with_scores if score >= SOURCE_SCORE_THRESHOLD]
-            context = "\n".join([doc.page_content for doc in docs])
+            docs = [doc for doc, score in docs_with_scores if score >= req.score_threshold]
             sources = list({os.path.basename(doc.metadata.get("source", ""))
                             for doc, score in docs_with_scores
-                            if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")})
+                            if score >= req.score_threshold and doc.metadata.get("source")})
 
             full_answer = ""
-            for chunk in (prompt | llm).stream({
-                "context": context,
-                "question": req.question,
-                "chat_history": chat_history,
-            }):
-                token = chunk.content
-                if token:
-                    full_answer += token
+            if not docs:
+                full_answer = "매뉴얼에서 확인이 어렵습니다."
+                yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
+            else:
+                context = "\n".join([doc.page_content for doc in docs])
+                for chunk in (prompt | llm).stream({
+                    "context": context,
+                    "question": req.question,
+                    "chat_history": chat_history,
+                }):
+                    token = chunk.content
+                    if token:
+                        full_answer += token
                     yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
             if not req.preview:
@@ -275,6 +280,7 @@ async def chat_graph_stream(req: ChatRequest):
                 "answer": "",
                 "relevant": "",
                 "sources": [],
+                "score_threshold": req.score_threshold,
             }
 
             full_answer = ""
@@ -329,13 +335,21 @@ async def chat_compare_stream(req: ChatRequest):
         docs_with_scores = await asyncio.to_thread(
             vectorstore.similarity_search_with_relevance_scores, req.question, k=4
         )
-        docs = [doc for doc, score in docs_with_scores if score >= SOURCE_SCORE_THRESHOLD]
-        context = "\n".join([doc.page_content for doc in docs])
+        docs = [doc for doc, score in docs_with_scores if score >= req.score_threshold]
         sources = list({
             os.path.basename(doc.metadata.get("source", ""))
             for doc, score in docs_with_scores
-            if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")
+            if score >= req.score_threshold and doc.metadata.get("source")
         })
+
+        if not docs:
+            no_answer = "매뉴얼에서 확인이 어렵습니다."
+            yield f"data: {json.dumps({'type': 'token_a', 'content': no_answer}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'token_b', 'content': no_answer}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'sources': []}, ensure_ascii=False)}\n\n"
+            return
+
+        context = "\n".join([doc.page_content for doc in docs])
         chain_input = {"context": context, "question": req.question, "chat_history": history}
 
         combined: asyncio.Queue = asyncio.Queue()

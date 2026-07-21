@@ -12,9 +12,7 @@ class GraphState(TypedDict):
     answer: str
     relevant: str  # "yes" | "no"
     sources: list
-
-
-SOURCE_SCORE_THRESHOLD = 0.5
+    score_threshold: float
 
 
 def build_graph(retriever, llm, vectorstore=None):
@@ -38,13 +36,18 @@ def build_graph(retriever, llm, vectorstore=None):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 docs_with_scores = vectorstore.similarity_search_with_relevance_scores(state["question"], k=4)
-            docs = [doc for doc, score in docs_with_scores if score >= SOURCE_SCORE_THRESHOLD]
+            threshold = state.get("score_threshold", 0.3)
+            docs = [doc for doc, score in docs_with_scores if score >= threshold]
             sources = list({doc.metadata.get("source", "")
                             for doc, score in docs_with_scores
-                            if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")})
+                            if score >= threshold and doc.metadata.get("source")})
         else:
             docs = retriever.invoke(state["question"])
             sources = list({doc.metadata.get("source", "") for doc in docs if doc.metadata.get("source")})
+
+        if not docs:
+            return {**state, "context": "", "answer": "매뉴얼에서 확인이 어렵습니다.", "sources": []}
+
         context = "\n".join([doc.page_content for doc in docs])
 
         answer_prompt = ChatPromptTemplate.from_messages([

@@ -727,6 +727,8 @@
     .compare-divider { width: 1px; background: var(--compare-divider); flex-shrink: 0; }
     .bottom-bar { padding: 6px 16px 10px; display:flex; align-items:center; gap:6px; font-size:12px; color: var(--bottom-bar-color); flex-wrap:wrap; }
     .bottom-bar-sep { color: var(--bottom-bar-sep); margin: 0 4px; }
+    .threshold-slider { width: 80px; accent-color: #1a73e8; cursor: pointer; vertical-align: middle; }
+    .threshold-val { font-weight: 600; color: #1a73e8; min-width: 24px; display: inline-block; }
     .compare-label {
       font-size: 11px;
       font-weight: 700;
@@ -892,6 +894,11 @@
         <span class="bottom-bar-sep">|</span>
         <input type="checkbox" id="compareMode" />
         <label for="compareMode">A/B 비교 모드</label>
+        <span class="bottom-bar-sep">|</span>
+        <label for="thresholdSlider">관련성</label>
+        <input type="range" id="thresholdSlider" class="threshold-slider" min="0" max="0.6" step="0.05" value="0.3"
+          oninput="document.getElementById('thresholdVal').textContent = parseFloat(this.value).toFixed(2)" />
+        <span class="threshold-val" id="thresholdVal">0.30</span>
       </div>
     </div>
   </div>
@@ -913,6 +920,10 @@
 
     function autoScroll() {
       if (!userScrolled) messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function getThreshold() {
+      return parseFloat(document.getElementById("thresholdSlider").value);
     }
 
     // ── 다크/라이트 모드 ──────────────────────────────────────────────
@@ -1190,7 +1201,7 @@
         const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, session_id: currentSessionId, model, regenerate }),
+          body: JSON.stringify({ question, session_id: currentSessionId, model, regenerate, score_threshold: getThreshold() }),
           signal: abortController.signal,
         });
 
@@ -1326,7 +1337,7 @@
         const res = await fetch("/chat-compare-stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, session_id: currentSessionId, model }),
+          body: JSON.stringify({ question, session_id: currentSessionId, model, score_threshold: getThreshold() }),
           signal: ctrl.signal,
         });
 
