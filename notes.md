@@ -1414,3 +1414,99 @@ async function regenerateMessage(question, model, divEl) {
 ```
 
 🔄 버튼 클릭 시 `feedback-row`를 먼저 제거한 뒤 `regenerateMessage` 호출.
+
+---
+
+## 버튼 아이콘 SVG 교체
+
+유니코드 문자(➤, ■)는 폰트 메트릭 때문에 flex centering으로도 시각적 중앙이 맞지 않음.
+SVG로 교체하면 폰트 메트릭 영향 없이 정확히 가운데 정렬됨.
+
+```html
+<!-- 전송 버튼 -->
+<button class="btn-send" id="sendBtn" onclick="sendMessage()">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+    <polygon points="5,3 19,12 5,21"/>
+  </svg>
+</button>
+
+<!-- 중지 버튼 -->
+<button class="btn-stop" id="stopBtn" onclick="stopStreaming()">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+    <rect x="3" y="3" width="18" height="18"/>
+  </svg>
+</button>
+```
+
+CSS에도 `padding: 0; line-height: 1;` 명시해 브라우저 기본 여백 제거.
+
+---
+
+## 세션 제목 더블클릭 편집
+
+### 동작 방식
+
+사이드바 세션 제목을 더블클릭 → 인라인 입력창 전환.
+- **Enter** 또는 포커스 해제: 저장
+- **Escape**: 취소, 원래 제목 복원
+- 최대 30자 제한
+
+### 백엔드 — app.py
+
+```python
+class TitleUpdateRequest(BaseModel):
+    title: str
+
+@app.patch("/sessions/{session_id}/title")
+def update_session_title(session_id: str, req: TitleUpdateRequest):
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="제목은 비워둘 수 없습니다.")
+    save_session_title(session_id, title[:30])  # save_session_title은 INSERT OR REPLACE
+    return {"message": "제목이 업데이트되었습니다."}
+```
+
+### 프론트엔드 — index.html
+
+`loadSessionList`에서 세션 항목에 `data-fulltitle` 저장(표시용으로 잘린 제목이 아닌 원본).
+
+```javascript
+// loadSessionList 내부 — 더블클릭 리스너 등록
+list.querySelectorAll(".session-title").forEach(titleEl => {
+  titleEl.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    startEditTitle(titleEl, titleEl.closest(".session-item").dataset.sid);
+  });
+});
+
+function startEditTitle(titleEl, sessionId) {
+  const fullTitle = titleEl.closest(".session-item").dataset.fulltitle;
+  const input = document.createElement("input");
+  input.value = fullTitle;
+  input.className = "session-title-input";
+  input.maxLength = 30;
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let cancelled = false;
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    if (e.key === "Escape") { cancelled = true; loadSessionList(); }
+  });
+
+  input.addEventListener("blur", async () => {
+    if (cancelled) return;
+    const newTitle = input.value.trim();
+    if (newTitle && newTitle !== fullTitle) {
+      await fetch(`/sessions/${sessionId}/title`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle }),
+      });
+    }
+    loadSessionList();
+  });
+}
+```
