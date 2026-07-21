@@ -1304,7 +1304,7 @@ if (isFirstToken) { bubble.innerHTML = ""; isFirstToken = false; }
 ### 답변 복사 버튼 (📋)
 
 봇 버블에 마우스를 올리면 📋 버튼이 나타남. 클릭 시 마크다운 원문을 클립보드에 복사.
-스트리밍 완료 후에는 👍/👎 버튼과 같은 행 오른쪽에 표시. 히스토리 로드 시에는 hover 시에만 보임.
+스트리밍 완료 후에는 👍/👎/🔄 버튼과 같은 행 오른쪽에 표시. 히스토리 로드 시에는 hover 시에만 보임.
 
 ```javascript
 function copyToClipboard(btn, text) {
@@ -1341,3 +1341,76 @@ async function exportChat() {
   // a 태그로 다운로드 트리거
 }
 ```
+
+---
+
+## 답변 재생성 버튼 (🔄)
+
+### 목적
+
+답변이 마음에 들지 않을 때 같은 질문으로 다시 생성 요청. 👎 피드백과 연계해 "다시 받아보자"는 흐름을 자연스럽게 지원.
+
+### 동작 흐름
+
+```
+스트리밍 완료 → 👍 👎 🔄 📋 버튼 표시
+🔄 클릭 → 기존 버블 초기화(생각 중 애니메이션) → 새 답변 스트리밍 → 버튼 재표시
+```
+
+DB에는 직전 질문/답변 쌍을 삭제하고 새 답변으로 교체 → 히스토리에 중복 없음.
+
+### 백엔드 — database.py
+
+```python
+def delete_last_pair(session_id: str):
+    # 해당 세션의 가장 최근 (human, ai) 2개 행 삭제
+    rows = conn.execute(
+        "SELECT id FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT 2", ...
+    ).fetchall()
+    if len(rows) == 2:
+        conn.execute("DELETE FROM chat_history WHERE id IN (?, ?)", ids)
+```
+
+### 백엔드 — app.py
+
+`ChatRequest`에 `regenerate: bool = False` 추가.
+
+스트림 핸들러에서:
+
+```python
+if req.regenerate and len(history) >= 2:
+    delete_last_pair(req.session_id)
+    history = history[:-2]          # LLM에 넘길 컨텍스트도 마지막 쌍 제외
+
+is_first = not req.regenerate and len(history) == 0  # 재생성 시 세션 제목 재생성 안 함
+```
+
+### 프론트엔드 — index.html
+
+`streamMessage`에 `existingDiv`와 `regenerate` 파라미터 추가.
+
+```javascript
+async function streamMessage(question, model, endpoint = "/chat-stream",
+                             existingDiv = null, regenerate = false) {
+  let div;
+  if (existingDiv) {
+    div = existingDiv;
+    div.querySelector(".bubble").innerHTML = `<thinking 애니메이션>`;
+    div.querySelectorAll(".sources, .feedback-row, .message-actions").forEach(el => el.remove());
+  } else {
+    // 기존 방식: 새 div 생성 후 append
+  }
+  // fetch body에 regenerate 포함
+  body: JSON.stringify({ question, session_id: currentSessionId, model, regenerate }),
+}
+
+async function regenerateMessage(question, model, divEl) {
+  const endpoint = graphMode ? "/chat-graph-stream" : "/chat-stream";
+  setStreaming(true);
+  await streamMessage(question, model, endpoint, divEl, true);
+  setStreaming(false);
+  loadSessionList();
+}
+```
+
+🔄 버튼 클릭 시 `feedback-row`를 먼저 제거한 뒤 `regenerateMessage` 호출.
