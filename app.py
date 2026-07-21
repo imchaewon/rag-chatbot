@@ -332,6 +332,19 @@ def remove_session(session_id: str):
     return {"message": f"세션 '{session_id}'이 삭제되었습니다."}
 
 
+class TitleUpdateRequest(BaseModel):
+    title: str
+
+
+@app.patch("/sessions/{session_id}/title")
+def update_session_title(session_id: str, req: TitleUpdateRequest):
+    title = req.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="제목은 비워둘 수 없습니다.")
+    save_session_title(session_id, title[:30])
+    return {"message": "제목이 업데이트되었습니다."}
+
+
 @app.get("/stats")
 def stats():
     return {"questions": get_question_stats()}

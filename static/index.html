@@ -100,6 +100,18 @@
     .session-item:hover .btn-delete-session { color: #888; }
     .btn-delete-session:hover { color: #fff !important; background: rgba(255,255,255,0.15); }
 
+    .session-title-input {
+      flex: 1;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.35);
+      border-radius: 4px;
+      color: #fff;
+      font-size: 13px;
+      padding: 1px 5px;
+      outline: none;
+      min-width: 0;
+    }
+
     .session-empty {
       padding: 20px 10px;
       color: #555;
@@ -349,6 +361,8 @@
       border-radius: 50%;
       color: #fff;
       font-size: 16px;
+      line-height: 1;
+      padding: 0;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -365,7 +379,9 @@
       border: none;
       border-radius: 50%;
       color: #fff;
-      font-size: 14px;
+      font-size: 20px;
+      line-height: 1;
+      padding: 0;
       cursor: pointer;
       display: none;
       align-items: center;
@@ -613,8 +629,16 @@
           placeholder="질문을 입력하세요..."
           onkeydown="handleKeydown(event)"
         />
-        <button class="btn-send" id="sendBtn" onclick="sendMessage()">➤</button>
-        <button class="btn-stop" id="stopBtn" onclick="stopStreaming()">■</button>
+        <button class="btn-send" id="sendBtn" onclick="sendMessage()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5,3 19,12 5,21"/>
+          </svg>
+        </button>
+        <button class="btn-stop" id="stopBtn" onclick="stopStreaming()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="3" y="3" width="18" height="18"/>
+          </svg>
+        </button>
       </div>
       <div style="padding: 6px 16px 10px; display:flex; align-items:center; gap:6px; font-size:12px; color:#666;">
         <input type="checkbox" id="graphMode" />
@@ -654,9 +678,10 @@
       list.innerHTML = data.sessions.map(s => {
         const title = s.title.length > 22 ? s.title.slice(0, 22) + "…" : s.title;
         const active = s.session_id === currentSessionId ? " active" : "";
+        const fullTitle = s.title.replace(/"/g, "&quot;");
         return `
-          <div class="session-item${active}" data-sid="${s.session_id}">
-            <span class="session-title">${title}</span>
+          <div class="session-item${active}" data-sid="${s.session_id}" data-fulltitle="${fullTitle}">
+            <span class="session-title" title="더블클릭하여 제목 편집">${title}</span>
             <button class="btn-delete-session" data-sid="${s.session_id}" title="삭제">✕</button>
           </div>`;
       }).join("");
@@ -672,6 +697,13 @@
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
           deleteSession(btn.dataset.sid);
+        });
+      });
+
+      list.querySelectorAll(".session-title").forEach(titleEl => {
+        titleEl.addEventListener("dblclick", (e) => {
+          e.stopPropagation();
+          startEditTitle(titleEl, titleEl.closest(".session-item").dataset.sid);
         });
       });
     }
@@ -711,6 +743,40 @@
       const suggestions = document.getElementById("suggestions");
       suggestions.style.display = "flex";
       document.getElementById("questionInput").focus();
+    }
+
+    function startEditTitle(titleEl, sessionId) {
+      const sessionItem = titleEl.closest(".session-item");
+      const fullTitle = sessionItem.dataset.fulltitle;
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = fullTitle;
+      input.className = "session-title-input";
+      input.maxLength = 30;
+      titleEl.replaceWith(input);
+      input.focus();
+      input.select();
+
+      let cancelled = false;
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+        if (e.key === "Escape") { cancelled = true; loadSessionList(); }
+      });
+
+      input.addEventListener("blur", async () => {
+        if (cancelled) return;
+        const newTitle = input.value.trim();
+        if (newTitle && newTitle !== fullTitle) {
+          await fetch(`/sessions/${sessionId}/title`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: newTitle }),
+          });
+        }
+        loadSessionList();
+      });
     }
 
     // ── 메시지 ───────────────────────────────────────────────────────
