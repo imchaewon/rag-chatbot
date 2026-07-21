@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from database import init_db, get_history, save_messages, delete_last_pair, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, save_feedback, get_feedback_stats
+from database import init_db, get_history, save_messages, delete_last_pair, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, pin_session, unpin_session, save_feedback, get_feedback_stats
 from graph import build_graph
 
 load_dotenv()
@@ -343,6 +343,17 @@ def update_session_title(session_id: str, req: TitleUpdateRequest):
         raise HTTPException(status_code=400, detail="제목은 비워둘 수 없습니다.")
     save_session_title(session_id, title[:30])
     return {"message": "제목이 업데이트되었습니다."}
+
+
+@app.patch("/sessions/{session_id}/pin")
+def toggle_pin(session_id: str):
+    sessions = get_sessions()
+    current = next((s for s in sessions if s["session_id"] == session_id), None)
+    if current and current["pinned"]:
+        unpin_session(session_id)
+        return {"pinned": False}
+    pin_session(session_id)
+    return {"pinned": True}
 
 
 @app.get("/stats")

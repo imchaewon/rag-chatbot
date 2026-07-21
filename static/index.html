@@ -67,6 +67,7 @@
     .session-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
 
     .session-item {
+      position: relative;
       padding: 9px 10px;
       border-radius: 8px;
       cursor: pointer;
@@ -85,20 +86,55 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .btn-delete-session {
+
+    .btn-session-menu {
       flex-shrink: 0;
       background: none;
       border: none;
       color: transparent;
-      font-size: 13px;
+      font-size: 17px;
+      font-weight: bold;
       cursor: pointer;
-      padding: 1px 3px;
+      padding: 0 3px;
       border-radius: 4px;
       line-height: 1;
+      letter-spacing: -1px;
       transition: color 0.15s, background 0.15s;
     }
-    .session-item:hover .btn-delete-session { color: #888; }
-    .btn-delete-session:hover { color: #fff !important; background: rgba(255,255,255,0.15); }
+    .session-item:hover .btn-session-menu { color: #888; }
+    .btn-session-menu:hover, .btn-session-menu.active { color: #fff !important; background: rgba(255,255,255,0.15); }
+
+    .session-dropdown {
+      display: none;
+      position: absolute;
+      right: 4px;
+      top: calc(100% + 2px);
+      background: #2a2a2e;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 5px;
+      z-index: 50;
+      min-width: 130px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    }
+    .session-dropdown.open { display: block; }
+
+    .dropdown-item {
+      width: 100%;
+      background: none;
+      border: none;
+      color: #ccc;
+      font-size: 13px;
+      padding: 8px 11px;
+      border-radius: 6px;
+      cursor: pointer;
+      text-align: left;
+      display: block;
+      transition: background 0.15s, color 0.15s;
+    }
+    .dropdown-item:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .dropdown-item.danger { color: #ff7b7b; }
+    .dropdown-item.danger:hover { background: rgba(255,80,80,0.15); color: #ff9999; }
 
     .session-title-input {
       flex: 1;
@@ -676,27 +712,55 @@
       }
 
       list.innerHTML = data.sessions.map(s => {
-        const title = s.title.length > 22 ? s.title.slice(0, 22) + "…" : s.title;
+        const label = (s.pinned ? "📌 " : "") + (s.title.length > 20 ? s.title.slice(0, 20) + "…" : s.title);
         const active = s.session_id === currentSessionId ? " active" : "";
         const fullTitle = s.title.replace(/"/g, "&quot;");
         return `
-          <div class="session-item${active}" data-sid="${s.session_id}" data-fulltitle="${fullTitle}">
-            <span class="session-title" title="더블클릭하여 제목 편집">${title}</span>
-            <button class="btn-delete-session" data-sid="${s.session_id}" title="삭제">✕</button>
+          <div class="session-item${active}" data-sid="${s.session_id}" data-fulltitle="${fullTitle}" data-pinned="${s.pinned ? '1' : '0'}">
+            <span class="session-title" title="더블클릭하여 제목 편집">${label}</span>
+            <button class="btn-session-menu" title="옵션">⋮</button>
+            <div class="session-dropdown">
+              <button class="dropdown-item" data-action="rename">이름 변경</button>
+              <button class="dropdown-item" data-action="pin">${s.pinned ? '고정 해제' : '고정'}</button>
+              <button class="dropdown-item danger" data-action="delete">삭제</button>
+            </div>
           </div>`;
       }).join("");
 
       list.querySelectorAll(".session-item").forEach(el => {
         el.addEventListener("click", (e) => {
-          if (e.target.classList.contains("btn-delete-session")) return;
+          if (e.target.closest(".btn-session-menu") || e.target.closest(".session-dropdown")) return;
           selectSession(el.dataset.sid);
         });
       });
 
-      list.querySelectorAll(".btn-delete-session").forEach(btn => {
+      list.querySelectorAll(".btn-session-menu").forEach(btn => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          deleteSession(btn.dataset.sid);
+          const dropdown = btn.nextElementSibling;
+          const isOpen = dropdown.classList.contains("open");
+          closeAllDropdowns();
+          if (!isOpen) {
+            dropdown.classList.add("open");
+            btn.classList.add("active");
+          }
+        });
+      });
+
+      list.querySelectorAll(".dropdown-item").forEach(item => {
+        item.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const sessionItem = item.closest(".session-item");
+          const sid = sessionItem.dataset.sid;
+          closeAllDropdowns();
+          const action = item.dataset.action;
+          if (action === "rename") {
+            startEditTitle(sessionItem.querySelector(".session-title"), sid);
+          } else if (action === "pin") {
+            togglePin(sid);
+          } else if (action === "delete") {
+            deleteSession(sid);
+          }
         });
       });
 
@@ -706,6 +770,16 @@
           startEditTitle(titleEl, titleEl.closest(".session-item").dataset.sid);
         });
       });
+    }
+
+    function closeAllDropdowns() {
+      document.querySelectorAll(".session-dropdown.open").forEach(d => d.classList.remove("open"));
+      document.querySelectorAll(".btn-session-menu.active").forEach(b => b.classList.remove("active"));
+    }
+
+    async function togglePin(sessionId) {
+      await fetch(`/sessions/${sessionId}/pin`, { method: "PATCH" });
+      loadSessionList();
     }
 
     async function selectSession(sessionId) {
@@ -1163,6 +1237,8 @@
     modelSelect.addEventListener("change", () => {
       localStorage.setItem("selectedModel", modelSelect.value);
     });
+
+    document.addEventListener("click", closeAllDropdowns);
 
     loadSuggestions();
     loadSessionList();

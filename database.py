@@ -31,6 +31,11 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_pins (
+                session_id TEXT PRIMARY KEY
+            )
+        """)
 
 
 def get_history(session_id: str) -> list:
@@ -90,6 +95,16 @@ def save_session_title(session_id: str, title: str):
         )
 
 
+def pin_session(session_id: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT OR IGNORE INTO session_pins (session_id) VALUES (?)", (session_id,))
+
+
+def unpin_session(session_id: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM session_pins WHERE session_id = ?", (session_id,))
+
+
 def get_sessions() -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""
@@ -99,13 +114,15 @@ def get_sessions() -> list:
                     (SELECT content FROM chat_history
                      WHERE session_id = ch.session_id AND role = 'human'
                      ORDER BY id ASC LIMIT 1)) as title,
-                MAX(ch.created_at) as last_active
+                MAX(ch.created_at) as last_active,
+                CASE WHEN sp.session_id IS NOT NULL THEN 1 ELSE 0 END as pinned
             FROM chat_history ch
             LEFT JOIN session_titles st ON st.session_id = ch.session_id
+            LEFT JOIN session_pins sp ON sp.session_id = ch.session_id
             GROUP BY ch.session_id
-            ORDER BY last_active DESC
+            ORDER BY pinned DESC, last_active DESC
         """).fetchall()
-    return [{"session_id": r[0], "title": r[1] or "새 대화", "last_active": r[2]} for r in rows]
+    return [{"session_id": r[0], "title": r[1] or "새 대화", "last_active": r[2], "pinned": bool(r[3])} for r in rows]
 
 
 def get_full_history(session_id: str) -> list:
