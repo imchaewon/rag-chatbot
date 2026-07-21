@@ -38,7 +38,7 @@ def build_graph(retriever, llm, vectorstore=None):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 docs_with_scores = vectorstore.similarity_search_with_relevance_scores(state["question"], k=4)
-            docs = [doc for doc, _ in docs_with_scores]
+            docs = [doc for doc, score in docs_with_scores if score >= SOURCE_SCORE_THRESHOLD]
             sources = list({doc.metadata.get("source", "")
                             for doc, score in docs_with_scores
                             if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")})

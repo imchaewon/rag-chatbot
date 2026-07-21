@@ -12,7 +12,8 @@ from pydantic import BaseModel
 from langchain_ollama import ChatOllama
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_upstage import UpstageEmbeddings, ChatUpstage
+from langchain_ollama import OllamaEmbeddings
+from langchain_upstage import ChatUpstage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
@@ -30,17 +31,20 @@ SOURCE_SCORE_THRESHOLD = 0.5  # 이 점수 미만인 문서는 출처에 표시�
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global retriever, vectorstore, prompt
-    embeddings = UpstageEmbeddings(model="solar-embedding-1-large")
+    embeddings = OllamaEmbeddings(model="bge-m3")
     vectorstore = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
     retriever = vectorstore.as_retriever()
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """당신은 MSP 운영팀의 운영 도우미입니다.
+        ("system", """IMPORTANT: You MUST respond ONLY in Korean (한국어). Never use Japanese, Chinese, or any other language. Korean only.
+
+당신은 MSP 운영팀의 운영 도우미입니다.
 VM, Kubernetes, Solar Pro 등 운영 관련 질문에 답변합니다.
 아래 매뉴얼 내용을 바탕으로만 답변하세요. 매뉴얼에 없는 내용은 '매뉴얼에서 확인이 어렵습니다'라고 답하세요.
-반드시 한국어로만 답변하세요.
 
 [참고 매뉴얼]
-{context}"""),
+{context}
+
+반드시 한국어로만 답변하세요. 절대 일본어, 중국어, 영어를 사용하지 마세요."""),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{question}"),
     ])
@@ -204,7 +208,7 @@ def chat_stream(req: ChatRequest):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 docs_with_scores = vectorstore.similarity_search_with_relevance_scores(req.question, k=4)
-            docs = [doc for doc, _ in docs_with_scores]
+            docs = [doc for doc, score in docs_with_scores if score >= SOURCE_SCORE_THRESHOLD]
             context = "\n".join([doc.page_content for doc in docs])
             sources = list({os.path.basename(doc.metadata.get("source", ""))
                             for doc, score in docs_with_scores
@@ -325,7 +329,7 @@ async def chat_compare_stream(req: ChatRequest):
         docs_with_scores = await asyncio.to_thread(
             vectorstore.similarity_search_with_relevance_scores, req.question, k=4
         )
-        docs = [doc for doc, _ in docs_with_scores]
+        docs = [doc for doc, score in docs_with_scores if score >= SOURCE_SCORE_THRESHOLD]
         context = "\n".join([doc.page_content for doc in docs])
         sources = list({
             os.path.basename(doc.metadata.get("source", ""))
