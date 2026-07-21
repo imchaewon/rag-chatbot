@@ -36,6 +36,13 @@ def init_db():
                 session_id TEXT PRIMARY KEY
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_summaries (
+                session_id          TEXT PRIMARY KEY,
+                summary             TEXT NOT NULL,
+                summarized_up_to_id INTEGER NOT NULL
+            )
+        """)
 
 
 def get_history(session_id: str) -> list:
@@ -85,6 +92,37 @@ def delete_session(session_id: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM session_titles WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM session_summaries WHERE session_id = ?", (session_id,))
+
+
+def get_summary(session_id: str) -> dict | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT summary, summarized_up_to_id FROM session_summaries WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    return {"summary": row[0], "summarized_up_to_id": row[1]} if row else None
+
+
+def save_summary(session_id: str, summary: str, summarized_up_to_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO session_summaries (session_id, summary, summarized_up_to_id) VALUES (?, ?, ?)",
+            (session_id, summary, summarized_up_to_id),
+        )
+
+
+def get_messages_after(session_id: str, after_id: int) -> list:
+    """after_id보다 큰 id의 메시지를 [(db_id, message)] 형태로 반환"""
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id, role, content FROM chat_history WHERE session_id = ? AND id > ? ORDER BY id",
+            (session_id, after_id),
+        ).fetchall()
+    return [
+        (row[0], HumanMessage(content=row[2]) if row[1] == "human" else AIMessage(content=row[2]))
+        for row in rows
+    ]
 
 
 def save_session_title(session_id: str, title: str):

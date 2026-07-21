@@ -19,7 +19,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from database import init_db, get_history, save_messages, delete_last_pair, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, pin_session, unpin_session, save_feedback, get_feedback_stats
+from database import init_db, get_history, save_messages, delete_last_pair, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, pin_session, unpin_session, save_feedback, get_feedback_stats, get_summary, save_summary, get_messages_after
 from graph import build_graph
 
 load_dotenv()
@@ -63,24 +63,44 @@ def index():
 MAX_HISTORY_TURNS = 5  # 최근 5턴(메시지 10개) 초과 시 압축
 
 
-def compress_history(history: list, llm) -> list:
-    if len(history) <= MAX_HISTORY_TURNS * 2:
-        return history
+def get_compressed_history(session_id: str, llm, needs_compress: bool = False) -> tuple[list, bool]:
+    """캐시된 요약을 활용해 LLM 재요약을 최소화.
+    반환: (chat_history 리스트, 이번에 실제로 LLM 요약을 호출했는지 여부)
+    """
+    saved = get_summary(session_id)
+    after_id = saved["summarized_up_to_id"] if saved else 0
 
-    old = history[:-(MAX_HISTORY_TURNS * 2)]
-    recent = history[-(MAX_HISTORY_TURNS * 2):]
+    rows = get_messages_after(session_id, after_id)  # [(db_id, msg), ...]
+    messages = [msg for _, msg in rows]
+
+    if len(messages) <= MAX_HISTORY_TURNS * 2:
+        # 창 안에 들어옴 → LLM 호출 없이 캐시 요약 + 최근 메시지 반환
+        if saved:
+            return [SystemMessage(content=f"[이전 대화 요약]\n{saved['summary']}")] + messages, False
+        return messages, False
+
+    # 창 밖으로 새 메시지가 밀려남 → 재요약 필요
+    old_rows = rows[:-(MAX_HISTORY_TURNS * 2)]
+    recent_msgs = [msg for _, msg in rows[-(MAX_HISTORY_TURNS * 2):]]
 
     old_text = "\n".join([
-        f"{'사용자' if isinstance(m, HumanMessage) else 'AI'}: {m.content}"
-        for m in old
+        f"{'사용자' if isinstance(msg, HumanMessage) else 'AI'}: {msg.content}"
+        for _, msg in old_rows
     ])
-    summary_prompt = ChatPromptTemplate.from_messages([
-        ("system", "다음 대화를 3~5문장으로 핵심만 요약하세요."),
-        ("human", old_text),
-    ])
-    summary = (summary_prompt | llm).invoke({}).content
+    if saved:
+        text_to_summarize = f"[기존 요약]\n{saved['summary']}\n\n[추가 대화]\n{old_text}"
+    else:
+        text_to_summarize = old_text
 
-    return [SystemMessage(content=f"[이전 대화 요약]\n{summary}")] + recent
+    summary_prompt = ChatPromptTemplate.from_messages([
+        ("system", "다음 대화 내용을 3~5문장으로 핵심만 요약하세요."),
+        ("human", "{text}"),
+    ])
+    new_summary = (summary_prompt | llm).invoke({"text": text_to_summarize}).content
+    new_up_to_id = old_rows[-1][0]
+    save_summary(session_id, new_summary, new_up_to_id)
+
+    return [SystemMessage(content=f"[이전 대화 요약]\n{new_summary}")] + recent_msgs, True
 
 
 def get_llm(model: str):
@@ -144,7 +164,7 @@ def chat(req: ChatRequest):
         raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
 
     llm = get_llm(req.model)
-    chat_history = compress_history(get_history(req.session_id), llm)
+    chat_history, _ = get_compressed_history(req.session_id, llm)
 
     docs = retriever.invoke(req.question)
     context = "\n".join([doc.page_content for doc in docs])
@@ -167,7 +187,7 @@ def chat_graph(req: ChatRequest):
         raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
 
     llm = get_llm(req.model)
-    chat_history = compress_history(get_history(req.session_id), llm)
+    chat_history, _ = get_compressed_history(req.session_id, llm)
     graph = build_graph(retriever, llm, vectorstore)
 
     result = graph.invoke({
@@ -200,11 +220,9 @@ def chat_stream(req: ChatRequest):
         is_first = not req.regenerate and len(history) == 0
 
         try:
-            if len(history) > MAX_HISTORY_TURNS * 2:
+            chat_history, did_compress = get_compressed_history(req.session_id, llm)
+            if did_compress:
                 yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
-                chat_history = compress_history(history, llm)
-            else:
-                chat_history = history
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
@@ -266,11 +284,9 @@ async def chat_graph_stream(req: ChatRequest):
         is_first = not req.regenerate and len(history) == 0
 
         try:
-            if len(history) > MAX_HISTORY_TURNS * 2:
+            chat_history, did_compress = await asyncio.to_thread(get_compressed_history, req.session_id, llm)
+            if did_compress:
                 yield f"data: {json.dumps({'type': 'status', 'content': '이전 대화를 압축하는 중...'}, ensure_ascii=False)}\n\n"
-                chat_history = await asyncio.to_thread(compress_history, history, llm)
-            else:
-                chat_history = history
 
             graph = build_graph(retriever, llm, vectorstore)
             initial_state = {
