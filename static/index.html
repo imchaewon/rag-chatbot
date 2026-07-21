@@ -91,28 +91,35 @@
       flex-shrink: 0;
       background: none;
       border: none;
-      color: transparent;
-      font-size: 17px;
-      font-weight: bold;
       cursor: pointer;
       padding: 0 3px;
       border-radius: 4px;
       line-height: 1;
-      letter-spacing: -1px;
-      transition: color 0.15s, background 0.15s;
+      transition: background 0.15s;
     }
-    .icon-pin { display: none; font-style: normal; }
-    .icon-menu { display: inline; }
 
-    /* 고정된 세션: 기본은 📌, 호버 시 ⋮ */
-    .session-item[data-pinned="1"] .btn-session-menu { color: transparent; }
+    /* ⋮ : 기본 투명, 호버 시 표시 */
+    .icon-menu {
+      display: inline;
+      font-size: 17px;
+      font-weight: bold;
+      letter-spacing: -1px;
+      color: transparent;
+      transition: color 0.15s;
+    }
+    .session-item:hover .icon-menu { color: #888; }
+    .btn-session-menu:hover .icon-menu,
+    .btn-session-menu.active .icon-menu { color: #fff; }
+
+    /* 📌 : 고정 세션에서만 표시, 호버 시 숨김 */
+    .icon-pin { display: none; font-size: 13px; }
     .session-item[data-pinned="1"] .icon-pin { display: inline; }
     .session-item[data-pinned="1"] .icon-menu { display: none; }
-    .session-item:hover .icon-pin { display: none; }
-    .session-item:hover .icon-menu { display: inline; }
+    .session-item[data-pinned="1"]:hover .icon-pin { display: none; }
+    .session-item[data-pinned="1"]:hover .icon-menu { display: inline; }
 
-    .session-item:hover .btn-session-menu { color: #888; }
-    .btn-session-menu:hover, .btn-session-menu.active { color: #fff !important; background: rgba(255,255,255,0.15); }
+    .btn-session-menu:hover,
+    .btn-session-menu.active { background: rgba(255,255,255,0.15); }
     .btn-session-menu.active .icon-pin { display: none; }
     .btn-session-menu.active .icon-menu { display: inline; }
 
