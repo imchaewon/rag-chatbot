@@ -107,11 +107,19 @@ LLM은 모르는 정보를 그럴듯하게 지어냄 → RAG로 해결
 둘은 완전히 독립적. LLM을 Groq → Gemini로 바꿔도 임베딩 모델은 그대로.
 
 ### 현재 사용 중인 임베딩 모델
-`models/text-embedding-004` (Google Generative AI)
-- 외부 API 호출 방식 → 로컬 모델 로드 없이 빠름
-- 무료 티어: 분당 1500회
-- 데이터가 Google 서버로 전송됨 (보안 민감한 환경엔 부적합)
-- 인트라넷 배포 시 로컬 임베딩 모델로 교체 필요
+`bge-m3` (Ollama 로컬, BAAI 오픈소스)
+- 로컬에서 직접 실행 → 외부 API 비용 없음, 데이터 유출 없음
+- 인트라넷 환경에 적합
+- 유사도 점수 특성: bge-m3 기준 최고 유사도가 ~0.48 수준 (코사인 유사도가 아닌 정규화 점수)
+- 임베딩 모델은 LLM(Groq/Gemini/Ollama 선택)과 완전히 독립 — LLM을 바꿔도 임베딩은 그대로
+
+```python
+# ingest.py / app.py 동일하게
+from langchain_ollama import OllamaEmbeddings
+embeddings = OllamaEmbeddings(model="bge-m3")
+```
+
+> 이전: `text-embedding-004` (Google Generative AI) — API 비용 발생, 데이터 Google 서버 전송
 
 ### 임베딩이 하는 두 가지 역할
 
@@ -569,6 +577,20 @@ async for event in graph.astream_events(initial_state, version="v2"):
 | 실제 액션 수행 | "VM 재시작해줘" → kubectl 명령 직접 실행하는 에이전트 |
 | 자동 재검색 루프 | 답변 품질이 낮으면 자동으로 다시 검색 후 재답변 |
 | 멀티스텝 워크플로우 | 여러 매뉴얼을 단계적으로 검색해 종합 답변 생성 |
+
+### SOURCE_SCORE_THRESHOLD로 LangGraph check_relevance 대체
+
+LangGraph의 `check_relevance` 노드(LLM이 관련성 판단)는 SOURCE_SCORE_THRESHOLD 필터로 대체 가능.
+
+| | LangGraph check_relevance | 임계치 필터 |
+|---|---|---|
+| 판단 방법 | LLM이 의미적으로 판단 | 벡터 유사도 (수학 계산) |
+| LLM 호출 수 | 질문당 2회 (판단 + 답변) | 질문당 최대 1회 (답변만) |
+| 속도/비용 | 느림, 비쌈 | 빠름, 저렴 |
+| 판단 주체 | 모델 크기에 따라 신뢰도 다름 | 임베딩 모델 품질에 의존 |
+
+실용적으로는 잘 학습된 임베딩 모델(bge-m3 등)이면 벡터 유사도만으로 충분.
+LangGraph는 멀티스텝 에이전트/루프가 필요할 때 진가를 발휘함.
 
 ---
 
@@ -1139,23 +1161,41 @@ if (data.type === "error") {
 
 채팅 버블에 빨간색으로 오류 메시지 표시.
 
-### 출처 유사도 필터링
+### 출처 유사도 필터링 + RAG 단락 (SOURCE_SCORE_THRESHOLD)
 
-`similarity_search_with_relevance_scores()`로 점수를 받아 0.5 미만인 문서는 출처에서 제외.
-"안녕" 같은 무관한 질문은 점수가 음수(-0.1 등)로 나와 출처가 표시되지 않음.
-음수 점수에 대한 Chroma `UserWarning`은 `warnings.catch_warnings()`로 억제.
+`similarity_search_with_relevance_scores()`로 점수를 받아 임계치 미만 문서는 제외.
+bge-m3 기준 최고 유사도가 ~0.48이므로 기본 임계치를 0.3으로 설정.
 
 ```python
-SOURCE_SCORE_THRESHOLD = 0.5
+SOURCE_SCORE_THRESHOLD = 0.3  # bge-m3 기준 (이전 0.5는 Upstage solar 기준)
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
     docs_with_scores = vectorstore.similarity_search_with_relevance_scores(req.question, k=4)
 
+docs = [doc for doc, score in docs_with_scores if score >= req.score_threshold]
 sources = list({os.path.basename(doc.metadata.get("source", ""))
                 for doc, score in docs_with_scores
-                if score >= SOURCE_SCORE_THRESHOLD and doc.metadata.get("source")})
+                if score >= req.score_threshold and doc.metadata.get("source")})
 ```
+
+**핵심: docs가 비어있으면 LLM을 호출하지 않고 고정 메시지 반환**
+
+```python
+if not docs:
+    full_answer = "매뉴얼에서 확인이 어렵습니다."
+    yield f"data: {json.dumps({'type': 'token', 'content': full_answer})}\n\n"
+else:
+    context = "\n".join([doc.page_content for doc in docs])
+    for chunk in (prompt | llm).stream({...}):
+        ...
+```
+
+이 구조 덕분에 관련 없는 질문("밥 먹었어?" 등)은 임계치 이상의 문서가 없어 LLM 호출 자체가 발생하지 않음.
+→ 비용 절감 + LLM 지시 준수율과 무관하게 항상 동일한 거절 메시지 보장.
+
+**UI 슬라이더**: 하단 바에 `관련성` 슬라이더(0~0.6) 추가. 각 요청에 `score_threshold`로 전달.
+임계치 0이면 모든 문서 통과 → LLM 호출. 0.3 이상이면 관련 없는 질문은 컷.
 
 ---
 
@@ -1597,3 +1637,127 @@ async function togglePin(sessionId) {
 ```
 
 `.session-item`에 `position: relative` 필요 — 드롭다운이 `position: absolute`로 항목 기준 위치 잡음.
+
+---
+
+## A/B 비교 모드 병렬 스트리밍
+
+### 목적
+
+두 모델(예: Groq Llama vs Ollama qwen)의 답변을 동시에 나란히 스트리밍해서 품질 비교.
+
+### 문제 (이전 방식)
+
+SSE 연결을 두 개 열면 브라우저가 하나씩 순서대로 처리 → 답변이 순차적으로 나옴.
+
+### 해결 방법: 단일 SSE + asyncio 병렬
+
+하나의 `/chat-compare-stream` 엔드포인트에서 두 LLM을 `asyncio.create_task`로 동시에 실행하고, 합쳐진 큐로 토큰을 SSE 스트림에 내보냄.
+
+```python
+@app.post("/chat-compare-stream")
+async def chat_compare_stream(req: ChatRequest):
+    async def event_generator():
+        combined: asyncio.Queue = asyncio.Queue()
+
+        async def relay(label: str, model_id: str):
+            llm = get_llm(model_id)
+            async for chunk in (prompt | llm).astream({...}):
+                await combined.put({"type": f"token_{label}", "content": chunk.content})
+            await combined.put({"type": f"done_{label}"})
+
+        task_a = asyncio.create_task(relay("a", model_a))
+        task_b = asyncio.create_task(relay("b", model_b))
+
+        finished = 0
+        while finished < 2:
+            item = await combined.get()
+            if item["type"] in ("done_a", "done_b"):
+                finished += 1
+            else:
+                yield f"data: {json.dumps(item)}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done', 'sources': sources})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+```
+
+### OLLAMA_NUM_PARALLEL=2
+
+로컬 Ollama가 동시에 두 요청을 처리하려면 병렬 슬롯이 필요.
+`/Library/LaunchAgents/homebrew.mxcl.ollama.plist`의 EnvironmentVariables에 추가:
+
+```xml
+<key>OLLAMA_NUM_PARALLEL</key>
+<string>2</string>
+```
+
+적용: `launchctl unload` → `launchctl load` (brew services restart는 plist 변경을 못 읽는 경우 있음)
+확인: `ps eww $(pgrep -f "ollama serve") | tr ' ' '\n' | grep OLLAMA` → `llama-server -np 2`
+
+---
+
+## 다크/라이트 모드
+
+### CSS 변수 방식
+
+전역 CSS 변수(`:root`)로 색상을 정의하고, `data-theme` 속성으로 테마를 전환.
+
+```css
+:root {
+  --body-bg: #0d0d0d;
+  --sidebar-bg: #1a1a1a;
+  --chat-bg: #1c1c1e;
+  --text: #e8eaed;
+  /* ... */
+}
+
+[data-theme="light"] {
+  --body-bg: #f0f2f5;
+  --sidebar-bg: #e8eaed;
+  --chat-bg: #ffffff;
+  --text: #1a1a2e;
+  /* ... */
+}
+```
+
+### 전환 및 저장
+
+```javascript
+function applyTheme(dark) {
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  themeBtn.innerHTML = dark ? SUN_SVG : MOON_SVG;
+  localStorage.setItem("theme", dark ? "dark" : "light");
+}
+
+// 페이지 로드 시 복원
+applyTheme(localStorage.getItem("theme") === "dark");
+```
+
+헤더의 달/해 SVG 버튼 클릭으로 전환. 사이드바 + 채팅 영역 모두 한 번에 전환됨.
+
+---
+
+## 스트리밍 중 스크롤 동작
+
+### 문제
+
+스트리밍 중 자동 스크롤이 활성화되어 있으면, 사용자가 위로 스크롤해서 이전 내용을 보려 해도 강제로 아래로 내려감.
+
+### 해결: userScrolled 플래그
+
+```javascript
+let userScrolled = false;
+
+messagesEl.addEventListener("scroll", () => {
+  const atBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 50;
+  if (!atBottom) userScrolled = true;
+});
+
+function autoScroll() {
+  if (!userScrolled) messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+```
+
+스트리밍 시작 시 `userScrolled = false`로 초기화. 사용자가 위로 스크롤하면 플래그가 `true`가 되어 자동 스크롤 중단.
+스트리밍 완료 또는 새 메시지 전송 시 플래그 초기화.
