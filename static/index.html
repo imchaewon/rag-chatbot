@@ -1621,13 +1621,30 @@
 
     // ── 추천 검색어 ──────────────────────────────────────────────────
 
+    const AGENT_SUGGESTIONS = [
+      "deployment 목록 보여줘",
+      "pod 상태 확인해줘",
+      "nginx-demo 재시작해줘",
+      "nginx-demo 로그 확인해줘",
+      "nginx-demo 중지해줘",
+    ];
+
     async function loadSuggestions() {
-      let res;
-      try { res = await authFetch("/suggestions"); } catch (e) { return; }
-      if (!res.ok) return;
-      const data = await res.json();
+      const agentMode = document.getElementById("graphMode").checked;
       const container = document.getElementById("suggestions");
-      container.innerHTML = data.suggestions.map(q =>
+
+      let suggestions;
+      if (agentMode) {
+        suggestions = AGENT_SUGGESTIONS;
+      } else {
+        let res;
+        try { res = await authFetch("/suggestions"); } catch (e) { return; }
+        if (!res.ok) return;
+        const data = await res.json();
+        suggestions = data.suggestions;
+      }
+
+      container.innerHTML = suggestions.map(q =>
         `<button class="chip" data-q="${q.replace(/"/g, "&quot;")}">${q}</button>`
       ).join("");
       container.querySelectorAll(".chip").forEach(btn => {
@@ -1830,6 +1847,8 @@
     });
 
     document.addEventListener("click", closeAllDropdowns);
+
+    document.getElementById("graphMode").addEventListener("change", loadSuggestions);
 
     // 토큰 확인 후 오버레이 표시
     const savedToken = localStorage.getItem("authToken");
