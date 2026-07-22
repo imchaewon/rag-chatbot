@@ -1472,9 +1472,17 @@
 
             if (data.type === "error") {
               bubble.innerHTML = `<span style="color:#ea4335">⚠️ ${data.content}</span>`;
-            } else if (data.type === "status" || data.type === "retry") {
+            } else if (data.type === "retry") {
               fullText = "";
               bubble.innerHTML = `<em style="color:#999">${data.content}</em>`;
+            } else if (data.type === "status") {
+              fullText = "";
+              let lines = bubble.querySelector(".status-lines");
+              if (!lines) {
+                bubble.innerHTML = `<div class="status-lines"></div>`;
+                lines = bubble.querySelector(".status-lines");
+              }
+              lines.innerHTML += `<em style="color:#999">${data.content}</em><br>`;
             } else if (data.type === "token") {
               if (isFirstToken) { bubble.innerHTML = ""; isFirstToken = false; }
               fullText += data.content;
