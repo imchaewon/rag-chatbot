@@ -802,9 +802,117 @@
       font-size: 11px;
       flex-shrink: 0;
     }
+
+    /* ── 인증 오버레이 ── */
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+    }
+    .auth-overlay.hidden { display: none; }
+    .auth-box {
+      background: #fff;
+      border-radius: 16px;
+      padding: 32px 36px;
+      width: 340px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    }
+    .auth-logo {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .auth-logo .header-icon { font-size: 36px; margin-bottom: 6px; }
+    .auth-logo h2 { font-size: 16px; color: #202124; font-weight: 600; }
+    .auth-tabs {
+      display: flex;
+      border-bottom: 2px solid #e8eaed;
+      margin-bottom: 20px;
+    }
+    .auth-tab {
+      flex: 1;
+      background: none;
+      border: none;
+      padding: 8px 0;
+      font-size: 14px;
+      color: #9aa0a6;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .auth-tab.active { color: #1a73e8; border-bottom-color: #1a73e8; font-weight: 600; }
+    .auth-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #e8eaed;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .auth-input:focus { border-color: #1a73e8; }
+    .auth-error {
+      font-size: 12px;
+      color: #ea4335;
+      min-height: 18px;
+      margin-bottom: 8px;
+    }
+    .btn-auth {
+      width: 100%;
+      padding: 10px;
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-auth:hover { background: #1557b0; }
+    .header-username {
+      font-size: 12px;
+      color: #9aa0a6;
+      margin-right: 4px;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
+  <!-- 인증 오버레이 -->
+  <div class="auth-overlay hidden" id="authOverlay">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <div class="header-icon">🤖</div>
+        <h2>고객서비스 챗봇</h2>
+      </div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabLogin" onclick="showAuthTab('login')">로그인</button>
+        <button class="auth-tab" id="tabRegister" onclick="showAuthTab('register')">회원가입</button>
+      </div>
+      <div id="authLogin">
+        <input class="auth-input" id="loginUsername" type="text" placeholder="아이디" />
+        <input class="auth-input" id="loginPassword" type="password" placeholder="비밀번호"
+          onkeydown="if(event.key==='Enter')doLogin()" />
+        <div class="auth-error" id="loginError"></div>
+        <button class="btn-auth" onclick="doLogin()">로그인</button>
+      </div>
+      <div id="authRegister" style="display:none">
+        <input class="auth-input" id="regUsername" type="text" placeholder="아이디" />
+        <input class="auth-input" id="regPassword" type="password" placeholder="비밀번호" />
+        <input class="auth-input" id="regPassword2" type="password" placeholder="비밀번호 확인"
+          onkeydown="if(event.key==='Enter')doRegister()" />
+        <div class="auth-error" id="regError"></div>
+        <button class="btn-auth" onclick="doRegister()">가입하기</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="statsModal" onclick="hideStats(event)">
     <div class="modal">
       <div class="modal-header">
@@ -859,6 +967,8 @@
           <button class="btn-clear" id="themeToggleBtn" onclick="toggleTheme()" title="다크/라이트 모드"></button>
           <button class="btn-clear" onclick="showStats()">📊</button>
           <button class="btn-clear" onclick="exportChat()" title="대화 내보내기"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
+          <span class="header-username" id="headerUsername"></span>
+          <button class="btn-clear" onclick="logout()" title="로그아웃"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></button>
         </div>
       </div>
 
@@ -905,6 +1015,94 @@
 
   <script>
     marked.setOptions({ breaks: true, gfm: true });
+
+    // ── 인증 ─────────────────────────────────────────────────────────
+
+    function showAuthOverlay() {
+      document.getElementById("authOverlay").classList.remove("hidden");
+    }
+
+    function hideAuthOverlay() {
+      document.getElementById("authOverlay").classList.add("hidden");
+    }
+
+    function showAuthTab(tab) {
+      const isLogin = tab === "login";
+      document.getElementById("authLogin").style.display = isLogin ? "" : "none";
+      document.getElementById("authRegister").style.display = isLogin ? "none" : "";
+      document.getElementById("tabLogin").classList.toggle("active", isLogin);
+      document.getElementById("tabRegister").classList.toggle("active", !isLogin);
+      document.getElementById("loginError").textContent = "";
+      document.getElementById("regError").textContent = "";
+    }
+
+    async function doLogin() {
+      const username = document.getElementById("loginUsername").value.trim();
+      const password = document.getElementById("loginPassword").value;
+      const errEl = document.getElementById("loginError");
+      if (!username || !password) { errEl.textContent = "아이디와 비밀번호를 입력하세요."; return; }
+      try {
+        const res = await fetch("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.detail || "로그인 실패"; return; }
+        localStorage.setItem("authToken", data.token);
+        localStorage.setItem("authUsername", data.username);
+        document.getElementById("headerUsername").textContent = data.username;
+        hideAuthOverlay();
+        loadSuggestions();
+        loadSessionList();
+      } catch (e) {
+        errEl.textContent = "서버에 연결할 수 없습니다.";
+      }
+    }
+
+    async function doRegister() {
+      const username = document.getElementById("regUsername").value.trim();
+      const password = document.getElementById("regPassword").value;
+      const password2 = document.getElementById("regPassword2").value;
+      const errEl = document.getElementById("regError");
+      if (!username || !password) { errEl.textContent = "아이디와 비밀번호를 입력하세요."; return; }
+      if (password !== password2) { errEl.textContent = "비밀번호가 일치하지 않습니다."; return; }
+      try {
+        const res = await fetch("/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.detail || "가입 실패"; return; }
+        localStorage.setItem("authToken", data.token);
+        localStorage.setItem("authUsername", data.username);
+        document.getElementById("headerUsername").textContent = data.username;
+        hideAuthOverlay();
+        loadSuggestions();
+        loadSessionList();
+      } catch (e) {
+        errEl.textContent = "서버에 연결할 수 없습니다.";
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem("authToken");
+      localStorage.removeItem("authUsername");
+      document.getElementById("headerUsername").textContent = "";
+      document.getElementById("sessionList").innerHTML = "";
+      showAuthTab("login");
+      showAuthOverlay();
+    }
+
+    function authFetch(url, options = {}) {
+      const token = localStorage.getItem("authToken");
+      if (!token) { showAuthOverlay(); return Promise.reject(new Error("Unauthenticated")); }
+      const headers = { ...(options.headers || {}), "Authorization": "Bearer " + token };
+      return fetch(url, { ...options, headers });
+    }
+
+    // ── 세션 상태 ─────────────────────────────────────────────────────
 
     let currentSessionId = "session_" + Math.random().toString(36).slice(2, 9);
     let abortController = null;
@@ -956,7 +1154,9 @@
     // ── 사이드바 ──────────────────────────────────────────────────────
 
     async function loadSessionList() {
-      const res = await fetch("/sessions");
+      let res;
+      try { res = await authFetch("/sessions"); } catch (e) { return; }
+      if (res.status === 401) { logout(); return; }
       const data = await res.json();
       const list = document.getElementById("sessionList");
 
@@ -1034,7 +1234,7 @@
     }
 
     async function togglePin(sessionId) {
-      await fetch(`/sessions/${sessionId}/pin`, { method: "PATCH" });
+      await authFetch(`/sessions/${sessionId}/pin`, { method: "PATCH" });
       loadSessionList();
     }
 
@@ -1045,7 +1245,7 @@
         el.classList.toggle("active", el.dataset.sid === sessionId);
       });
 
-      const res = await fetch(`/sessions/${sessionId}`);
+      const res = await authFetch(`/sessions/${sessionId}`);
       const data = await res.json();
 
       const messages = document.getElementById("messages");
@@ -1100,7 +1300,7 @@
         if (cancelled) return;
         const newTitle = input.value.trim();
         if (newTitle && newTitle !== fullTitle) {
-          await fetch(`/sessions/${sessionId}/title`, {
+          await authFetch(`/sessions/${sessionId}/title`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ title: newTitle }),
@@ -1198,7 +1398,7 @@
       abortController = new AbortController();
 
       try {
-        const res = await fetch(endpoint, {
+        const res = await authFetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question, session_id: currentSessionId, model, regenerate, score_threshold: getThreshold() }),
@@ -1334,7 +1534,7 @@
       const firstToken = [true, true];
 
       try {
-        const res = await fetch("/chat-compare-stream", {
+        const res = await authFetch("/chat-compare-stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question, session_id: currentSessionId, model, score_threshold: getThreshold() }),
@@ -1387,7 +1587,7 @@
         btn.addEventListener("click", async () => {
           compareDiv.querySelectorAll(".btn-select-answer").forEach(b => b.disabled = true);
 
-          await fetch("/chat/save", {
+          await authFetch("/chat/save", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session_id: currentSessionId, question, answer: fullText[i], model }),
@@ -1422,7 +1622,9 @@
     // ── 추천 검색어 ──────────────────────────────────────────────────
 
     async function loadSuggestions() {
-      const res = await fetch("/suggestions");
+      let res;
+      try { res = await authFetch("/suggestions"); } catch (e) { return; }
+      if (!res.ok) return;
       const data = await res.json();
       const container = document.getElementById("suggestions");
       container.innerHTML = data.suggestions.map(q =>
@@ -1444,7 +1646,7 @@
       modal.style.display = "flex";
       list.innerHTML = `<p style="color:#9aa0a6; font-size:13px; text-align:center; padding:20px">로딩 중...</p>`;
 
-      const [statsRes, fbRes] = await Promise.all([fetch("/stats"), fetch("/feedback/stats")]);
+      const [statsRes, fbRes] = await Promise.all([authFetch("/stats"), authFetch("/feedback/stats")]);
       const data = await statsRes.json();
       const fb = await fbRes.json();
 
@@ -1496,7 +1698,7 @@
     // ── 세션 삭제 ─────────────────────────────────────────────────────
 
     async function deleteSession(sessionId) {
-      await fetch(`/sessions/${sessionId}`, { method: "DELETE" });
+      await authFetch(`/sessions/${sessionId}`, { method: "DELETE" });
 
       if (sessionId === currentSessionId) {
         newChat();
@@ -1515,7 +1717,7 @@
     }
 
     async function loadDocList() {
-      const res = await fetch("/documents");
+      const res = await authFetch("/documents");
       const data = await res.json();
       const list = document.getElementById("docList");
       if (data.documents.length === 0) {
@@ -1543,7 +1745,7 @@
       btn.disabled = true;
 
       try {
-        const res = await fetch("/documents", { method: "POST", body: formData });
+        const res = await authFetch("/documents", { method: "POST", body: formData });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail);
         btn.textContent = "✓ " + data.message;
@@ -1556,7 +1758,7 @@
     }
 
     async function deleteDocument(filename) {
-      await fetch(`/documents/${encodeURIComponent(filename)}`, { method: "DELETE" });
+      await authFetch(`/documents/${encodeURIComponent(filename)}`, { method: "DELETE" });
       loadDocList();
     }
 
@@ -1572,7 +1774,7 @@
     // ── 대화 내보내기 ─────────────────────────────────────────────────
 
     async function exportChat() {
-      const res = await fetch(`/sessions/${currentSessionId}`);
+      const res = await authFetch(`/sessions/${currentSessionId}`);
       const data = await res.json();
       if (!data.history || data.history.length === 0) return;
 
@@ -1601,7 +1803,7 @@
     async function submitFeedback(question, answer, rating, rowEl) {
       rowEl.querySelectorAll(".btn-feedback").forEach(b => b.disabled = true);
       try {
-        await fetch("/feedback", {
+        await authFetch("/feedback", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: currentSessionId, question, answer, rating }),
@@ -1629,8 +1831,16 @@
 
     document.addEventListener("click", closeAllDropdowns);
 
-    loadSuggestions();
-    loadSessionList();
+    // 토큰 확인 후 오버레이 표시
+    const savedToken = localStorage.getItem("authToken");
+    const savedUsername = localStorage.getItem("authUsername");
+    if (savedToken) {
+      document.getElementById("headerUsername").textContent = savedUsername || "";
+      loadSuggestions();
+      loadSessionList();
+    } else {
+      showAuthOverlay();
+    }
   </script>
 </body>
 </html>

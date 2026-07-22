@@ -43,6 +43,21 @@ def init_db():
                 summarized_up_to_id INTEGER NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                username   TEXT    NOT NULL UNIQUE,
+                password   TEXT    NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_owners (
+                session_id TEXT    PRIMARY KEY,
+                user_id    INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
 
 
 def get_history(session_id: str) -> list:
@@ -93,6 +108,7 @@ def delete_session(session_id: str):
         conn.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM session_titles WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM session_summaries WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM session_owners WHERE session_id = ?", (session_id,))
 
 
 def get_summary(session_id: str) -> dict | None:
@@ -143,7 +159,7 @@ def unpin_session(session_id: str):
         conn.execute("DELETE FROM session_pins WHERE session_id = ?", (session_id,))
 
 
-def get_sessions() -> list:
+def get_sessions(user_id: int) -> list:
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute("""
             SELECT
@@ -155,12 +171,48 @@ def get_sessions() -> list:
                 MAX(ch.created_at) as last_active,
                 CASE WHEN sp.session_id IS NOT NULL THEN 1 ELSE 0 END as pinned
             FROM chat_history ch
+            JOIN session_owners so ON so.session_id = ch.session_id AND so.user_id = ?
             LEFT JOIN session_titles st ON st.session_id = ch.session_id
             LEFT JOIN session_pins sp ON sp.session_id = ch.session_id
             GROUP BY ch.session_id
             ORDER BY pinned DESC, last_active DESC
-        """).fetchall()
+        """, (user_id,)).fetchall()
     return [{"session_id": r[0], "title": r[1] or "새 대화", "last_active": r[2], "pinned": bool(r[3])} for r in rows]
+
+
+def create_user(username: str, password_hash: str) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.execute(
+            "INSERT INTO users (username, password) VALUES (?, ?)",
+            (username, password_hash),
+        )
+        return cursor.lastrowid
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id, username, password FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    return {"id": row[0], "username": row[1], "password": row[2]} if row else None
+
+
+def set_session_owner(session_id: str, user_id: int):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO session_owners (session_id, user_id) VALUES (?, ?)",
+            (session_id, user_id),
+        )
+
+
+def verify_session_owner(session_id: str, user_id: int) -> bool:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM session_owners WHERE session_id = ? AND user_id = ?",
+            (session_id, user_id),
+        ).fetchone()
+    return row is not None
 
 
 def get_full_history(session_id: str) -> list:

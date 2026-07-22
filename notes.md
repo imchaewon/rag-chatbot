@@ -1698,3 +1698,161 @@ function autoScroll() {
 
 스트리밍 시작 시 `userScrolled = false`로 초기화. 사용자가 위로 스크롤하면 플래그가 `true`가 되어 자동 스크롤 중단.
 스트리밍 완료 또는 새 메시지 전송 시 플래그 초기화.
+
+---
+
+## LangGraph k8s 제어 모드
+
+### 배경
+
+관련성 판단(`check_relevance`)은 SOURCE_SCORE_THRESHOLD 임계치 필터로 대체했으므로, LangGraph 모드를 k8s 클러스터 직접 제어 기능으로 재활용.
+
+"nginx 재시작해줘" 같은 자연어 명령을 받아 kubectl을 실행하고 결과를 답변으로 돌려줌.
+
+### 그래프 흐름
+
+```
+질문
+ ↓
+[classify_intent]  ← LLM이 "k8s 명령인가? question인가?" 판단
+ ├── k8s  → [parse_k8s_command] → [execute_k8s] → END
+ └── question → [check_relevance] → [retrieve_and_answer | reject] → END
+```
+
+k8s 경로의 세 노드:
+- `classify_intent`: LLM이 `k8s` 또는 `question` 반환
+- `parse_k8s_command`: LLM이 action/target/namespace를 JSON으로 추출
+- `execute_k8s`: `k8s_tools.py`의 kubectl 래퍼 호출
+
+### k8s_tools.py
+
+```python
+_run(args, timeout)          # subprocess로 kubectl 실행 → (stdout, stderr, returncode)
+get_deployments(namespace)   # kubectl get deployments [-A | -n ns]
+get_pods(namespace)
+restart_deployment(name, ns) # rollout restart + wait
+scale_deployment(name, replicas, ns)
+get_logs(name, ns, tail=20)  # app=name 레이블로 pod 찾아 로그 조회
+find_deployment(name)        # 전 네임스페이스 탐색 → (name, namespace) or None
+```
+
+네임스페이스를 명시하지 않으면 `find_deployment()`로 전 네임스페이스에서 자동 탐색.
+
+### GraphState 추가 필드
+
+```python
+class GraphState(TypedDict):
+    ...
+    intent: str        # "k8s" | "question"
+    k8s_action: str    # restart | stop | start | logs | status
+    k8s_target: str    # 대상 deployment 이름
+    k8s_namespace: str # 네임스페이스 (빈 문자열이면 자동 탐색)
+```
+
+### 데모 환경
+
+Docker Desktop 내장 k8s. `kubectl apply -f` 로 nginx-demo deployment 배포해서 테스트.
+
+---
+
+## 사용자 인증 (JWT)
+
+### 목적
+
+사용자별 계정을 만들어 각자의 대화 세션을 격리. 다른 사용자의 세션이 보이지 않음.
+
+### 기술 스택
+
+| 항목 | 선택 | 이유 |
+|---|---|---|
+| 비밀번호 해싱 | `bcrypt` 직접 호출 | `passlib`의 신버전 bcrypt 미지원 문제로 대체 |
+| 토큰 | JWT (PyJWT) | 서버 세션 저장 불필요, stateless |
+| 인증 방식 | HTTP Bearer | FastAPI `HTTPBearer` 사용 |
+
+### bcrypt 직접 호출 (passlib 대신)
+
+`passlib[bcrypt]`는 bcrypt 4.x/5.x의 `__about__` 속성 변경으로 500 에러 발생 → `bcrypt` 패키지를 직접 사용.
+
+```python
+import bcrypt
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
+```
+
+### DB 스키마 추가
+
+```sql
+CREATE TABLE users (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT    NOT NULL UNIQUE,
+    password   TEXT    NOT NULL,       -- bcrypt 해시
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+
+CREATE TABLE session_owners (
+    session_id TEXT    PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+)
+```
+
+`get_sessions(user_id)`에서 `session_owners` JOIN으로 본인 세션만 반환.
+
+### FastAPI 인증 의존성
+
+```python
+_bearer = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
+    try:
+        payload = decode_token(credentials.credentials)
+        return {"user_id": int(payload["sub"]), "username": payload["username"]}
+    except Exception:
+        raise HTTPException(status_code=401, detail="인증이 필요합니다.")
+```
+
+모든 엔드포인트에 `user=Depends(get_current_user)` 추가. 유효한 Bearer 토큰 없으면 401.
+
+### 인증 엔드포인트
+
+```python
+POST /auth/register  # { username, password } → { token, username }
+POST /auth/login     # { username, password } → { token, username }
+```
+
+두 엔드포인트는 토큰 없이 접근 가능 (인증 의존성 제외).
+
+### 프론트엔드 — authFetch 래퍼
+
+```javascript
+function authFetch(url, options = {}) {
+    const token = localStorage.getItem("authToken");
+    if (!token) { showAuthOverlay(); return Promise.reject(new Error("Unauthenticated")); }
+    const headers = { ...(options.headers || {}), "Authorization": "Bearer " + token };
+    return fetch(url, { ...options, headers });
+}
+```
+
+모든 API 호출을 `authFetch()`로 교체. `/auth/register`, `/auth/login`만 일반 `fetch()` 유지.
+
+### 프론트엔드 — 인증 오버레이
+
+페이지 로드 시 `localStorage.getItem("authToken")` 확인. 토큰 없으면 로그인/회원가입 오버레이 표시.
+로그인/가입 성공 시 토큰 + 사용자명을 localStorage에 저장하고 오버레이 닫음.
+헤더에 현재 사용자명 표시 + 로그아웃 버튼 (클릭 시 localStorage 초기화 후 오버레이 재표시).
+
+### 기존 세션 이관
+
+인증 도입 전 데이터는 `session_owners`에 행이 없어 로그인 후 보이지 않음.
+아래 SQL로 기존 세션 전체를 특정 계정에 일괄 이관 가능:
+
+```python
+conn.executemany(
+    "INSERT OR IGNORE INTO session_owners (session_id, user_id) VALUES (?, <user_id>)",
+    orphan_sessions,
+)
+```

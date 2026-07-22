@@ -4,8 +4,9 @@ import os
 import warnings
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import json
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -19,7 +20,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from database import init_db, get_history, save_messages, delete_last_pair, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, pin_session, unpin_session, save_feedback, get_feedback_stats, get_summary, save_summary, get_messages_after
+from database import init_db, get_history, save_messages, delete_last_pair, get_question_stats, get_sessions, get_full_history, delete_session, save_session_title, pin_session, unpin_session, save_feedback, get_feedback_stats, get_summary, save_summary, get_messages_after, create_user, get_user_by_username, set_session_owner, verify_session_owner
+from auth import hash_password, verify_password, create_token, decode_token
 from graph import build_graph
 
 load_dotenv()
@@ -53,6 +55,42 @@ VM, Kubernetes, Solar Pro 등 운영 관련 질문에 답변합니다.
 
 app = FastAPI(title="RAG 챗봇 API", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+_bearer = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer)) -> dict:
+    try:
+        payload = decode_token(credentials.credentials)
+        return {"user_id": int(payload["sub"]), "username": payload["username"]}
+    except Exception:
+        raise HTTPException(status_code=401, detail="인증이 필요합니다.")
+
+
+class AuthRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/register")
+def register(req: AuthRequest):
+    if len(req.username) < 2:
+        raise HTTPException(status_code=400, detail="사용자 이름은 2자 이상이어야 합니다.")
+    if len(req.password) < 4:
+        raise HTTPException(status_code=400, detail="비밀번호는 4자 이상이어야 합니다.")
+    if get_user_by_username(req.username):
+        raise HTTPException(status_code=409, detail="이미 사용 중인 사용자 이름입니다.")
+    user_id = create_user(req.username, hash_password(req.password))
+    token = create_token(user_id, req.username)
+    return {"token": token, "username": req.username}
+
+
+@app.post("/auth/login")
+def login(req: AuthRequest):
+    user = get_user_by_username(req.username)
+    if not user or not verify_password(req.password, user["password"]):
+        raise HTTPException(status_code=401, detail="사용자 이름 또는 비밀번호가 올바르지 않습니다.")
+    token = create_token(user["id"], user["username"])
+    return {"token": token, "username": user["username"]}
 
 
 @app.get("/")
@@ -209,7 +247,7 @@ def chat_graph(req: ChatRequest):
 
 
 @app.post("/chat-stream")
-def chat_stream(req: ChatRequest):
+def chat_stream(req: ChatRequest, user=Depends(get_current_user)):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
 
@@ -254,6 +292,7 @@ def chat_stream(req: ChatRequest):
 
             if not req.preview and docs:
                 save_messages(req.session_id, req.question, full_answer)
+                set_session_owner(req.session_id, user["user_id"])
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
             if is_first and not req.preview and docs:
                 try:
@@ -273,7 +312,7 @@ def chat_stream(req: ChatRequest):
 
 
 @app.post("/chat-graph-stream")
-async def chat_graph_stream(req: ChatRequest):
+async def chat_graph_stream(req: ChatRequest, user=Depends(get_current_user)):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="질문을 입력해주세요.")
 
@@ -333,6 +372,7 @@ async def chat_graph_stream(req: ChatRequest):
 
             if not req.preview:
                 await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
+                await asyncio.to_thread(set_session_owner, req.session_id, user["user_id"])
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
             if is_first and not req.preview:
                 try:
@@ -353,7 +393,7 @@ async def chat_graph_stream(req: ChatRequest):
 
 
 @app.post("/chat-compare-stream")
-async def chat_compare_stream(req: ChatRequest):
+async def chat_compare_stream(req: ChatRequest, user=Depends(get_current_user)):
     async def event_generator():
         history = await asyncio.to_thread(get_history, req.session_id)
         docs_with_scores = await asyncio.to_thread(
@@ -412,17 +452,21 @@ async def chat_compare_stream(req: ChatRequest):
 
 
 @app.get("/sessions")
-def list_sessions():
-    return {"sessions": get_sessions()}
+def list_sessions(user=Depends(get_current_user)):
+    return {"sessions": get_sessions(user["user_id"])}
 
 
 @app.get("/sessions/{session_id}")
-def session_history(session_id: str):
+def session_history(session_id: str, user=Depends(get_current_user)):
+    if not verify_session_owner(session_id, user["user_id"]):
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
     return {"history": get_full_history(session_id)}
 
 
 @app.delete("/sessions/{session_id}")
-def remove_session(session_id: str):
+def remove_session(session_id: str, user=Depends(get_current_user)):
+    if not verify_session_owner(session_id, user["user_id"]):
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
     delete_session(session_id)
     return {"message": f"세션 '{session_id}'이 삭제되었습니다."}
 
@@ -435,9 +479,10 @@ class SaveRequest(BaseModel):
 
 
 @app.post("/chat/save")
-def save_chat_result(req: SaveRequest):
+def save_chat_result(req: SaveRequest, user=Depends(get_current_user)):
     is_first = len(get_history(req.session_id)) == 0
     save_messages(req.session_id, req.question, req.answer)
+    set_session_owner(req.session_id, user["user_id"])
     if is_first:
         try:
             llm = get_llm(req.model)
@@ -452,7 +497,9 @@ class TitleUpdateRequest(BaseModel):
 
 
 @app.patch("/sessions/{session_id}/title")
-def update_session_title(session_id: str, req: TitleUpdateRequest):
+def update_session_title(session_id: str, req: TitleUpdateRequest, user=Depends(get_current_user)):
+    if not verify_session_owner(session_id, user["user_id"]):
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
     title = req.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="제목은 비워둘 수 없습니다.")
@@ -461,8 +508,10 @@ def update_session_title(session_id: str, req: TitleUpdateRequest):
 
 
 @app.patch("/sessions/{session_id}/pin")
-def toggle_pin(session_id: str):
-    sessions = get_sessions()
+def toggle_pin(session_id: str, user=Depends(get_current_user)):
+    if not verify_session_owner(session_id, user["user_id"]):
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다.")
+    sessions = get_sessions(user["user_id"])
     current = next((s for s in sessions if s["session_id"] == session_id), None)
     if current and current["pinned"]:
         unpin_session(session_id)
@@ -472,7 +521,7 @@ def toggle_pin(session_id: str):
 
 
 @app.get("/stats")
-def stats():
+def stats(user=Depends(get_current_user)):
     return {"questions": get_question_stats()}
 
 
@@ -486,7 +535,7 @@ PREDEFINED_SUGGESTIONS = [
 
 
 @app.get("/suggestions")
-def suggestions():
+def suggestions(user=Depends(get_current_user)):
     top = [s["question"] for s in get_question_stats(limit=3)]
     merged = list(dict.fromkeys(top + PREDEFINED_SUGGESTIONS))[:5]
     return {"suggestions": merged}
@@ -505,7 +554,7 @@ class FeedbackRequest(BaseModel):
 
 
 @app.post("/feedback")
-def feedback(req: FeedbackRequest):
+def feedback(req: FeedbackRequest, user=Depends(get_current_user)):
     if req.rating not in (1, -1):
         raise HTTPException(status_code=400, detail="rating은 1 또는 -1이어야 합니다.")
     save_feedback(req.session_id, req.question, req.answer, req.rating)
@@ -513,7 +562,7 @@ def feedback(req: FeedbackRequest):
 
 
 @app.get("/feedback/stats")
-def feedback_stats():
+def feedback_stats(user=Depends(get_current_user)):
     return get_feedback_stats()
 
 
@@ -524,7 +573,7 @@ CHUNK_OVERLAP = 50
 
 
 @app.get("/documents")
-def list_documents():
+def list_documents(user=Depends(get_current_user)):
     results = vectorstore._collection.get(include=["metadatas"])
     sources = sorted({
         os.path.basename(m.get("source", ""))
@@ -534,7 +583,7 @@ def list_documents():
 
 
 @app.post("/documents")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), user=Depends(get_current_user)):
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="txt 또는 pdf 파일만 업로드 가능합니다.")
@@ -553,7 +602,7 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 @app.delete("/documents/{filename}")
-def delete_document(filename: str):
+def delete_document(filename: str, user=Depends(get_current_user)):
     all_results = vectorstore._collection.get(include=["metadatas"])
     ids_to_delete = [
         all_results["ids"][i]
