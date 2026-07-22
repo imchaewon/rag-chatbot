@@ -1230,6 +1230,36 @@ else:
 **UI 슬라이더**: 하단 바에 `관련성` 슬라이더(0~0.6) 추가. 각 요청에 `score_threshold`로 전달.
 임계치 0이면 모든 문서 통과 → LLM 호출. 0.3 이상이면 관련 없는 질문은 컷.
 
+### SOURCE_DISPLAY_MIN (출처 표시 최소 점수)
+
+슬라이더를 0으로 내리면 무관한 질문("밥 먹었어?")도 docs를 통과해 LLM이 자체 지식으로 답변하고, 매뉴얼이 출처로 표시되는 문제가 있음.
+
+```python
+SOURCE_DISPLAY_MIN = 0.2  # 슬라이더 설정과 무관하게 출처 표시·저장 최소 기준
+```
+
+`sources` 리스트를 `max(req.score_threshold, SOURCE_DISPLAY_MIN)` 기준으로 필터링:
+
+```python
+sources = list({os.path.basename(doc.metadata.get("source", ""))
+                for doc, score in docs_with_scores
+                if score >= max(req.score_threshold, SOURCE_DISPLAY_MIN) and doc.metadata.get("source")})
+```
+
+그리고 DB 저장 조건을 `docs` → `sources`로 변경:
+
+```python
+if not req.preview and sources:   # sources가 있을 때만 저장
+    save_messages(...)
+    set_session_owner(...)
+```
+
+| 상황 | sources | 출처 표시 | DB 저장 | 추천 질문 노출 |
+|---|---|---|---|---|
+| MSP 관련 질문 (점수 ≥ 0.2) | 있음 | O | O | O |
+| 슬라이더 0 + 무관한 질문 (점수 < 0.2) | 없음 | X | X | X |
+| 슬라이더 0.3 + 무관한 질문 | docs 없음 | X | X | X |
+
 ---
 
 ## 스트리밍 중단 버튼

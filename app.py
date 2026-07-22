@@ -28,6 +28,7 @@ load_dotenv()
 
 # 앱 시작 시 한 번만 로드
 SOURCE_SCORE_THRESHOLD = 0.3  # bge-m3 기준 최고 점수가 0.5 수준이므로 0.3으로 설정
+SOURCE_DISPLAY_MIN = 0.2      # 출처 표시 최소 점수 (슬라이더 0 설정 시에도 저품질 출처 숨김)
 
 
 @asynccontextmanager
@@ -272,7 +273,7 @@ def chat_stream(req: ChatRequest, user=Depends(get_current_user)):
             docs = [doc for doc, score in docs_with_scores if score >= req.score_threshold]
             sources = list({os.path.basename(doc.metadata.get("source", ""))
                             for doc, score in docs_with_scores
-                            if score >= req.score_threshold and doc.metadata.get("source")})
+                            if score >= max(req.score_threshold, SOURCE_DISPLAY_MIN) and doc.metadata.get("source")})
 
             full_answer = ""
             if not docs:
@@ -290,11 +291,11 @@ def chat_stream(req: ChatRequest, user=Depends(get_current_user)):
                         full_answer += token
                     yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
-            if not req.preview and docs:
+            if not req.preview and sources:
                 save_messages(req.session_id, req.question, full_answer)
                 set_session_owner(req.session_id, user["user_id"])
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
-            if is_first and not req.preview and docs:
+            if is_first and not req.preview and sources:
                 try:
                     save_session_title(req.session_id, generate_session_title(req.question, llm))
                 except Exception:
@@ -370,11 +371,11 @@ async def chat_graph_stream(req: ChatRequest, user=Depends(get_current_user)):
                         full_answer = output.get("answer", "")
                         yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
 
-            if not req.preview:
+            if not req.preview and sources:
                 await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
                 await asyncio.to_thread(set_session_owner, req.session_id, user["user_id"])
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
-            if is_first and not req.preview:
+            if is_first and not req.preview and sources:
                 try:
                     title = await asyncio.to_thread(generate_session_title, req.question, llm)
                     await asyncio.to_thread(save_session_title, req.session_id, title)
@@ -403,7 +404,7 @@ async def chat_compare_stream(req: ChatRequest, user=Depends(get_current_user)):
         sources = list({
             os.path.basename(doc.metadata.get("source", ""))
             for doc, score in docs_with_scores
-            if score >= req.score_threshold and doc.metadata.get("source")
+            if score >= max(req.score_threshold, SOURCE_DISPLAY_MIN) and doc.metadata.get("source")
         })
 
         if not docs:

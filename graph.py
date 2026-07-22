@@ -116,9 +116,10 @@ def build_graph(retriever, llm, vectorstore=None):
                 docs_with_scores = vectorstore.similarity_search_with_relevance_scores(state["question"], k=4)
             threshold = state.get("score_threshold", 0.3)
             docs = [doc for doc, score in docs_with_scores if score >= threshold]
+            display_min = max(threshold, 0.2)
             sources = list({doc.metadata.get("source", "")
                             for doc, score in docs_with_scores
-                            if score >= threshold and doc.metadata.get("source")})
+                            if score >= display_min and doc.metadata.get("source")})
         else:
             docs = retriever.invoke(state["question"])
             sources = list({doc.metadata.get("source", "") for doc in docs if doc.metadata.get("source")})
