@@ -11,18 +11,58 @@ def _run(args: list[str], timeout: int = 60) -> tuple[str, str, int]:
     return result.stdout.strip(), result.stderr.strip(), result.returncode
 
 
+def _to_md_table(text: str) -> str:
+    """kubectl 표 출력을 마크다운 테이블로 변환 (위치 기반 파싱)."""
+    lines = [l for l in text.splitlines() if l.strip()]
+    if len(lines) < 2:
+        return text
+
+    header = lines[0]
+    # 헤더에서 각 컬럼의 시작 위치 추출
+    positions = []
+    i = 0
+    while i < len(header):
+        if header[i] != ' ':
+            positions.append(i)
+            while i < len(header) and header[i] != ' ':
+                i += 1
+            while i < len(header) and header[i] == ' ':
+                i += 1
+        else:
+            i += 1
+
+    def slice_row(line):
+        cells = []
+        for j, pos in enumerate(positions):
+            end = positions[j + 1] if j + 1 < len(positions) else len(line)
+            cells.append(line[pos:end].strip() if pos < len(line) else "")
+        return cells
+
+    headers = slice_row(header)
+    rows = [slice_row(l) for l in lines[1:]]
+
+    col_widths = [max(len(h), max((len(r[i]) for r in rows), default=3), 3)
+                  for i, h in enumerate(headers)]
+
+    def fmt_row(cells):
+        return "| " + " | ".join(c.ljust(col_widths[i]) for i, c in enumerate(cells)) + " |"
+
+    sep = "| " + " | ".join("-" * w for w in col_widths) + " |"
+    return "\n".join([fmt_row(headers), sep] + [fmt_row(r) for r in rows])
+
+
 def get_deployments(namespace: str = None) -> str:
-    args = ["get", "deployments", "-o", "wide"]
+    args = ["get", "deployments"]
     args += ["-A"] if namespace is None else ["-n", namespace]
     out, err, rc = _run(args)
-    return out if rc == 0 else f"오류: {err}"
+    return _to_md_table(out) if rc == 0 else f"오류: {err}"
 
 
 def get_pods(namespace: str = None) -> str:
-    args = ["get", "pods", "-o", "wide"]
+    args = ["get", "pods"]
     args += ["-A"] if namespace is None else ["-n", namespace]
     out, err, rc = _run(args)
-    return out if rc == 0 else f"오류: {err}"
+    return _to_md_table(out) if rc == 0 else f"오류: {err}"
 
 
 def restart_deployment(name: str, namespace: str = "default") -> str:
