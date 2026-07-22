@@ -27,11 +27,12 @@ def build_graph(retriever, llm, vectorstore=None):
         prompt = ChatPromptTemplate.from_messages([
             ("system", """다음 질문이 Kubernetes 클러스터 제어 명령인지 판단하세요.
 제어 명령 예시: "nginx 재시작해줘", "pod 상태 확인해줘", "deployment 중지해줘", "로그 보여줘", "스케일 줄여줘"
-반드시 'k8s' 또는 'question' 중 하나만 영어로 답하세요."""),
+출력 규칙: k8s 또는 question 중 하나만 출력하세요. 절대 다른 텍스트를 포함하지 마세요."""),
             ("human", "{question}"),
         ])
         result = (prompt | llm).invoke({"question": state["question"]})
-        intent = "k8s" if "k8s" in result.content.lower() else "question"
+        cleaned = result.content.lower().strip().strip(".,!? \n\t")
+        intent = "k8s" if cleaned == "k8s" else "question"
         return {**state, "intent": intent}
 
     # ── 노드 2: k8s 명령 파싱 ────────────────────────────────────────
@@ -105,7 +106,7 @@ def build_graph(retriever, llm, vectorstore=None):
         ])
         result = (check_prompt | llm).invoke({"question": state["question"]})
         content = result.content.lower().strip()
-        relevant = "yes" if "yes" in content or "예" in content or "관련" in content else "no"
+        relevant = "yes" if "yes" in content else "no"
         return {**state, "relevant": relevant}
 
     # ── 노드 5: 검색 + 답변 생성 ─────────────────────────────────────
@@ -145,9 +146,18 @@ def build_graph(retriever, llm, vectorstore=None):
         })
         return {**state, "context": context, "answer": response.content, "sources": sources}
 
-    # ── 노드 6: 관련 없음 반환 ───────────────────────────────────────
+    # ── 노드 6: 비MSP 질문 응답 ──────────────────────────────────────
     def reject(state: GraphState) -> GraphState:
-        return {**state, "answer": "MSP 운영과 관련 없는 질문입니다. 운영 매뉴얼 관련 질문을 입력해주세요.", "sources": []}
+        reject_prompt = ChatPromptTemplate.from_messages([
+            ("system", """당신은 MSP 운영 매뉴얼 기반 챗봇입니다.
+사용자가 인사나 간단한 대화를 하면 친근하게 응답하세요.
+MSP 운영과 무관한 정보 질문이면 '저는 MSP 운영 매뉴얼 기반 챗봇이라 해당 내용은 답변이 어렵습니다'라고만 하세요.
+어떤 경우에도 매뉴얼 외 사실 정보는 절대 제공하지 마세요.
+반드시 한국어로 답하세요."""),
+            ("human", "{question}"),
+        ])
+        result = (reject_prompt | llm).invoke({"question": state["question"]})
+        return {**state, "answer": result.content, "sources": []}
 
     # ── 분기 함수 ────────────────────────────────────────────────────
     def route_intent(state: GraphState) -> str:

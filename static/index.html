@@ -728,8 +728,6 @@
     .compare-divider { width: 1px; background: var(--compare-divider); flex-shrink: 0; }
     .bottom-bar { padding: 6px 16px 10px; display:flex; align-items:center; gap:6px; font-size:12px; color: var(--bottom-bar-color); flex-wrap:wrap; }
     .bottom-bar-sep { color: var(--bottom-bar-sep); margin: 0 4px; }
-    .threshold-slider { width: 80px; accent-color: #1a73e8; cursor: pointer; vertical-align: middle; }
-    .threshold-val { font-weight: 600; color: #1a73e8; min-width: 24px; display: inline-block; }
     .compare-label {
       font-size: 11px;
       font-weight: 700;
@@ -1048,16 +1046,8 @@
         </button>
       </div>
       <div class="bottom-bar">
-        <input type="checkbox" id="graphMode" />
-        <label for="graphMode">에이전트 모드</label>
-        <span class="bottom-bar-sep">|</span>
         <input type="checkbox" id="compareMode" />
         <label for="compareMode">A/B 비교 모드</label>
-        <span class="bottom-bar-sep">|</span>
-        <label for="thresholdSlider">관련성</label>
-        <input type="range" id="thresholdSlider" class="threshold-slider" min="0" max="0.6" step="0.05" value="0.3"
-          oninput="document.getElementById('thresholdVal').textContent = parseFloat(this.value).toFixed(2)" />
-        <span class="threshold-val" id="thresholdVal">0.30</span>
       </div>
     </div>
   </div>
@@ -1166,10 +1156,6 @@
 
     function autoScroll() {
       if (!userScrolled) messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    function getThreshold() {
-      return parseFloat(document.getElementById("thresholdSlider").value);
     }
 
     // ── 다크/라이트 모드 ──────────────────────────────────────────────
@@ -1395,7 +1381,6 @@
       if (!question) return;
 
       const model = document.getElementById("modelSelect").value;
-      const graphMode = document.getElementById("graphMode").checked;
       const compareMode = document.getElementById("compareMode").checked;
 
       input.value = "";
@@ -1406,11 +1391,10 @@
       document.getElementById("suggestions").style.display = "none";
       setStreaming(true);
 
-      const endpoint = graphMode ? "/chat-graph-stream" : "/chat-stream";
       if (compareMode) {
         await runComparisonMode(question, model);
       } else {
-        await streamMessage(question, model, endpoint);
+        await streamMessage(question, model, "/chat-graph-stream");
       }
       setStreaming(false);
       input.focus();
@@ -1418,10 +1402,8 @@
     }
 
     async function regenerateMessage(question, model, divEl) {
-      const graphMode = document.getElementById("graphMode").checked;
-      const endpoint = graphMode ? "/chat-graph-stream" : "/chat-stream";
       setStreaming(true);
-      await streamMessage(question, model, endpoint, divEl, true);
+      await streamMessage(question, model, "/chat-graph-stream", divEl, true);
       setStreaming(false);
       loadSessionList();
     }
@@ -1450,7 +1432,7 @@
         const res = await authFetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, session_id: currentSessionId, model, regenerate, score_threshold: getThreshold() }),
+          body: JSON.stringify({ question, session_id: currentSessionId, model, regenerate }),
           signal: abortController.signal,
         });
 
@@ -1594,7 +1576,7 @@
         const res = await authFetch("/chat-compare-stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, session_id: currentSessionId, model, score_threshold: getThreshold() }),
+          body: JSON.stringify({ question, session_id: currentSessionId, model }),
           signal: ctrl.signal,
         });
 
@@ -1678,30 +1660,14 @@
 
     // ── 추천 검색어 ──────────────────────────────────────────────────
 
-    const AGENT_SUGGESTIONS = [
-      "deployment 목록 보여줘",
-      "pod 상태 확인해줘",
-      "nginx-demo 재시작해줘",
-      "nginx-demo 로그 확인해줘",
-      "nginx-demo 중지해줘",
-    ];
-
     async function loadSuggestions() {
-      const agentMode = document.getElementById("graphMode").checked;
       const container = document.getElementById("suggestions");
+      let res;
+      try { res = await authFetch("/suggestions"); } catch (e) { return; }
+      if (!res.ok) return;
+      const data = await res.json();
 
-      let suggestions;
-      if (agentMode) {
-        suggestions = AGENT_SUGGESTIONS;
-      } else {
-        let res;
-        try { res = await authFetch("/suggestions"); } catch (e) { return; }
-        if (!res.ok) return;
-        const data = await res.json();
-        suggestions = data.suggestions;
-      }
-
-      container.innerHTML = suggestions.map(q =>
+      container.innerHTML = data.suggestions.map(q =>
         `<button class="chip" data-q="${q.replace(/"/g, "&quot;")}">${q}</button>`
       ).join("");
       container.querySelectorAll(".chip").forEach(btn => {
@@ -1904,8 +1870,6 @@
     });
 
     document.addEventListener("click", closeAllDropdowns);
-
-    document.getElementById("graphMode").addEventListener("change", loadSuggestions);
 
     // 토큰 확인 후 오버레이 표시
     const savedToken = localStorage.getItem("authToken");

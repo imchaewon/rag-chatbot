@@ -380,14 +380,27 @@ async def chat_graph_stream(req: ChatRequest, user=Depends(get_current_user)):
                     node = event.get("metadata", {}).get("langgraph_node", "")
                     if node == "retrieve_and_answer":
                         output = event["data"].get("output", {})
-                        sources = [os.path.basename(s) for s in output.get("sources", []) if s]
-                    elif node in ("reject", "execute_k8s"):
+                        if isinstance(output, dict):
+                            sources = [os.path.basename(s) for s in output.get("sources", []) if s]
+                            if not full_answer:
+                                fallback = output.get("answer", "")
+                                if fallback:
+                                    full_answer = fallback
+                                    yield f"data: {json.dumps({'type': 'token', 'content': fallback}, ensure_ascii=False)}\n\n"
+                    elif node in ("execute_k8s", "reject"):
                         output = event["data"].get("output", {})
-                        full_answer = output.get("answer", "")
-                        yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
+                        if isinstance(output, dict):
+                            ans = output.get("answer", "")
+                        elif hasattr(output, "content"):
+                            ans = output.content
+                        else:
+                            ans = ""
+                        if ans and not full_answer:
+                            full_answer = ans
+                            yield f"data: {json.dumps({'type': 'token', 'content': ans}, ensure_ascii=False)}\n\n"
 
             if not req.preview and full_answer:
-                await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer, "agent")
+                await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
                 await asyncio.to_thread(set_session_owner, req.session_id, user["user_id"])
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
             if is_first and not req.preview and full_answer:
