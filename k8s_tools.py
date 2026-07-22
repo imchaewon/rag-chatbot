@@ -104,6 +104,32 @@ def get_logs(name: str, namespace: str = "default", tail: int = 20) -> str:
     return out if rc == 0 else f"로그 조회 실패: {err}"
 
 
+def get_containers(pod_name: str, namespace: str = "default") -> str:
+    out, err, rc = _run([
+        "get", "pod", pod_name, "-n", namespace,
+        "-o", "jsonpath={range .spec.containers[*]}{.name}{'\\n'}{end}",
+    ])
+    if rc != 0 or not out:
+        return f"Pod '{pod_name}'를 찾을 수 없습니다: {err}"
+    container_list = "\n".join(f"- {c}" for c in out.splitlines() if c.strip())
+    return f"**{pod_name}** 의 컨테이너 목록:\n{container_list}"
+
+
+def find_pod(name: str) -> tuple[str, str] | None:
+    """전체 네임스페이스에서 pod 이름으로 (name, namespace) 반환. 없으면 None."""
+    out, _, rc = _run([
+        "get", "pods", "-A",
+        "-o", "jsonpath={range .items[*]}{.metadata.name}{'|'}{.metadata.namespace}{'\\n'}{end}",
+    ])
+    if rc != 0:
+        return None
+    for line in out.splitlines():
+        parts = line.split("|")
+        if len(parts) == 2 and parts[0].strip() == name:
+            return parts[0].strip(), parts[1].strip()
+    return None
+
+
 def find_deployment(name: str) -> tuple[str, str] | None:
     """전체 네임스페이스에서 deployment 이름으로 (name, namespace) 반환. 없으면 None."""
     out, _, rc = _run([

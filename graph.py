@@ -3,7 +3,7 @@ import warnings
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from k8s_tools import get_deployments, get_pods, restart_deployment, scale_deployment, get_logs, find_deployment
+from k8s_tools import get_deployments, get_pods, restart_deployment, scale_deployment, get_logs, get_containers, find_deployment, find_pod
 
 
 class GraphState(TypedDict):
@@ -48,6 +48,7 @@ def build_graph(retriever, llm, vectorstore=None):
 - stop: deployment 중지
 - start: deployment 시작
 - logs: 로그 조회
+- containers: 특정 pod의 컨테이너 목록 조회 ("컨테이너 목록", "컨테이너 확인" 등)
 네임스페이스 규칙:
 - 특정 네임스페이스가 명시된 경우: 해당 값 사용
 - "전체", "모든", "all" 네임스페이스를 의미하면: "all"
@@ -82,9 +83,14 @@ def build_graph(retriever, llm, vectorstore=None):
         target = state["k8s_target"]
         ns = state["k8s_namespace"]
 
-        # 네임스페이스 자동 탐색
-        if target and not ns:
-            found = find_deployment(target)
+        # 네임스페이스 자동 탐색 (target이 있고 ns가 없을 때)
+        if target and not ns and action not in ("list", "status"):
+            # pod 이름 형식이면 pod에서 탐색, 아니면 deployment에서 탐색
+            is_pod_name = len(target.split("-")) >= 4
+            if action == "containers" or is_pod_name:
+                found = find_pod(target)
+            else:
+                found = find_deployment(target)
             if found:
                 target, ns = found
             else:
@@ -99,6 +105,8 @@ def build_graph(retriever, llm, vectorstore=None):
                 result = scale_deployment(target, 1, ns)
             elif action == "logs":
                 result = get_logs(target, ns)
+            elif action == "containers":
+                result = get_containers(target, ns or "default")
             elif action == "list":
                 result = get_deployments(ns if ns else None)
             else:  # status
