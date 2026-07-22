@@ -343,6 +343,7 @@ async def chat_graph_stream(req: ChatRequest, user=Depends(get_current_user)):
                 "score_threshold": req.score_threshold,
                 "intent": "",
                 "k8s_action": "",
+                "k8s_resource": "",
                 "k8s_target": "",
                 "k8s_namespace": "",
             }

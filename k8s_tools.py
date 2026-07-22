@@ -104,18 +104,8 @@ def get_logs(name: str, namespace: str = "default", tail: int = 20) -> str:
     return out if rc == 0 else f"로그 조회 실패: {err}"
 
 
-def get_jobs(namespace: str = None) -> str:
-    args = ["get", "jobs"]
-    if namespace == "all":
-        args += ["-A"]
-    elif namespace:
-        args += ["-n", namespace]
-    out, err, rc = _run(args)
-    return _to_md_table(out) if rc == 0 else f"오류: {err}"
-
-
-def get_services(namespace: str = None) -> str:
-    args = ["get", "services"]
+def get_resource(resource: str, namespace: str = None) -> str:
+    args = ["get", resource]
     if namespace == "all":
         args += ["-A"]
     elif namespace:

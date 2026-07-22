@@ -3,7 +3,7 @@ import warnings
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from k8s_tools import get_deployments, get_pods, get_jobs, get_services, restart_deployment, scale_deployment, get_logs, get_containers, find_deployment, find_pod
+from k8s_tools import get_resource, restart_deployment, scale_deployment, get_logs, get_containers, find_deployment, find_pod
 
 
 class GraphState(TypedDict):
@@ -16,6 +16,7 @@ class GraphState(TypedDict):
     score_threshold: float
     intent: str     # "k8s" | "question"
     k8s_action: str
+    k8s_resource: str
     k8s_target: str
     k8s_namespace: str
 
@@ -40,41 +41,49 @@ def build_graph(retriever, llm, vectorstore=None):
     # ── 노드 2: k8s 명령 파싱 ────────────────────────────────────────
     def parse_k8s_command(state: GraphState) -> GraphState:
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """이전 대화 맥락을 참고해 현재 명령에서 액션·대상·네임스페이스를 추출해 JSON으로만 답하세요.
+            ("system", """이전 대화 맥락을 참고해 현재 명령에서 액션·리소스·대상·네임스페이스를 추출해 JSON으로만 답하세요.
+
 액션 종류:
-- list: deployment 목록 조회 ("deployment 목록", "deployment 조회" 등)
-- status: pod 상태 확인 ("pod 상태 확인", "pod 목록" 등)
-- jobs: job 목록 조회 ("job 목록", "job 조회" 등)
-- services: service 목록 조회 ("service 목록", "svc 조회" 등)
+- get: 리소스 목록/상태 조회
 - restart: deployment 재시작
-- stop: deployment 중지
-- start: deployment 시작
+- stop: deployment 중지 (replicas=0)
+- start: deployment 시작 (replicas=1)
 - logs: 로그 조회
-- containers: 특정 pod의 컨테이너 목록 조회 ("컨테이너 목록", "컨테이너 확인" 등)
+- containers: 특정 pod의 컨테이너 목록 조회
+
+get 액션일 때 resource 필드에 kubectl 리소스명 그대로 입력:
+pods, deployments, jobs, services, configmaps, secrets, ingresses,
+statefulsets, daemonsets, replicasets, cronjobs, nodes, namespaces,
+persistentvolumes, persistentvolumeclaims, serviceaccounts, events 등
+
 네임스페이스 규칙:
 - 특정 네임스페이스가 명시된 경우: 해당 값 사용
 - "전체", "모든", "all" 네임스페이스를 의미하면: "all"
 - 언급이 없으면: 빈 문자열("")
 
-예시 출력: {{"action": "restart", "target": "nginx-demo", "namespace": ""}}"""),
+예시 출력:
+{{"action": "get", "resource": "pods", "target": "", "namespace": ""}}
+{{"action": "get", "resource": "configmaps", "target": "", "namespace": "kube-system"}}
+{{"action": "restart", "resource": "deployment", "target": "nginx-demo", "namespace": ""}}
+{{"action": "containers", "resource": "pod", "target": "nginx-demo-6b86554995-jdg85", "namespace": ""}}"""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
         ])
         result = (prompt | llm).invoke({"question": state["question"], "chat_history": state["chat_history"]})
         try:
             raw = result.content.strip()
-            # 코드블록 제거
             if "```" in raw:
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:]
             parsed = json.loads(raw.strip())
         except Exception:
-            parsed = {"action": "status", "target": "", "namespace": ""}
+            parsed = {"action": "get", "resource": "pods", "target": "", "namespace": ""}
 
         return {
             **state,
-            "k8s_action": parsed.get("action", "status"),
+            "k8s_action": parsed.get("action", "get"),
+            "k8s_resource": parsed.get("resource", "pods"),
             "k8s_target": parsed.get("target", ""),
             "k8s_namespace": parsed.get("namespace", ""),
         }
@@ -82,24 +91,20 @@ def build_graph(retriever, llm, vectorstore=None):
     # ── 노드 3: k8s 명령 실행 ────────────────────────────────────────
     def execute_k8s(state: GraphState) -> GraphState:
         action = state["k8s_action"]
+        resource = state.get("k8s_resource", "pods")
         target = state["k8s_target"]
         ns = state["k8s_namespace"]
 
-        # 네임스페이스 자동 탐색 (target이 있고 ns가 없을 때)
-        if target and not ns and action not in ("list", "status"):
-            # pod 이름 형식이면 pod에서 탐색, 아니면 deployment에서 탐색
+        # target이 있고 ns가 없으면 자동 탐색
+        if target and not ns and action != "get":
             is_pod_name = len(target.split("-")) >= 4
-            if action == "containers" or is_pod_name:
-                found = find_pod(target)
-            else:
-                found = find_deployment(target)
-            if found:
-                target, ns = found
-            else:
-                ns = "default"
+            found = find_pod(target) if (action == "containers" or is_pod_name) else find_deployment(target)
+            target, ns = found if found else (target, "default")
 
         try:
-            if action == "restart":
+            if action == "get":
+                result = get_resource(resource, ns if ns else None)
+            elif action == "restart":
                 result = restart_deployment(target, ns)
             elif action == "stop":
                 result = scale_deployment(target, 0, ns)
@@ -109,14 +114,8 @@ def build_graph(retriever, llm, vectorstore=None):
                 result = get_logs(target, ns)
             elif action == "containers":
                 result = get_containers(target, ns or "default")
-            elif action == "list":
-                result = get_deployments(ns if ns else None)
-            elif action == "jobs":
-                result = get_jobs(ns if ns else None)
-            elif action == "services":
-                result = get_services(ns if ns else None)
-            else:  # status
-                result = get_pods(ns if ns else None)
+            else:
+                result = get_resource("pods", ns if ns else None)
         except Exception as e:
             result = f"실행 중 오류: {e}"
 
