@@ -881,6 +881,37 @@
       margin-right: 4px;
       white-space: nowrap;
     }
+
+    /* ── 마크다운 테이블 ── */
+    .bubble table {
+      border-collapse: collapse;
+      font-size: 12px;
+      margin: 8px 0;
+      width: 100%;
+    }
+    .bubble th {
+      background: #1a73e8;
+      color: #fff;
+      padding: 6px 10px;
+      text-align: left;
+      border: 1px solid #1557b0;
+    }
+    .bubble td {
+      padding: 5px 10px;
+      border: 1px solid #e8eaed;
+    }
+    .bubble tr:nth-child(even) td { background: #f8f9fa; }
+    .bubble tr:hover td { background: #e8f0fe; }
+
+    [data-theme="dark"] .bubble th {
+      background: #1a56b0;
+      border-color: #0f3d8a;
+    }
+    [data-theme="dark"] .bubble td {
+      border-color: rgba(255,255,255,0.1);
+    }
+    [data-theme="dark"] .bubble tr:nth-child(even) td { background: rgba(255,255,255,0.04); }
+    [data-theme="dark"] .bubble tr:hover td { background: rgba(26,115,232,0.15); }
   </style>
 </head>
 <body>
