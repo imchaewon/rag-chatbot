@@ -350,10 +350,23 @@ async def chat_graph_stream(req: ChatRequest, user=Depends(get_current_user)):
             full_answer = ""
             sources = []
 
+            NODE_STATUS = {
+                "classify_intent":    "🔍 의도 분류 중...",
+                "parse_k8s_command":  "⚙️ 명령 파싱 중...",
+                "execute_k8s":        "🖥️ kubectl 실행 중...",
+                "check_relevance":    "📋 관련성 검토 중...",
+                "retrieve_and_answer": "📚 매뉴얼 검색 중...",
+            }
+
             async for event in graph.astream_events(initial_state, version="v2"):
                 kind = event["event"]
 
-                if kind == "on_chat_model_stream":
+                if kind == "on_chain_start":
+                    node = event.get("metadata", {}).get("langgraph_node", "")
+                    if node in NODE_STATUS:
+                        yield f"data: {json.dumps({'type': 'status', 'content': NODE_STATUS[node]}, ensure_ascii=False)}\n\n"
+
+                elif kind == "on_chat_model_stream":
                     node = event.get("metadata", {}).get("langgraph_node", "")
                     if node == "retrieve_and_answer":
                         token = event["data"]["chunk"].content
