@@ -27,10 +27,12 @@ def build_graph(retriever, llm, vectorstore=None):
         prompt = ChatPromptTemplate.from_messages([
             ("system", """다음 질문이 Kubernetes 클러스터 제어 명령인지 판단하세요.
 제어 명령 예시: "nginx 재시작해줘", "pod 상태 확인해줘", "deployment 중지해줘", "로그 보여줘", "스케일 줄여줘"
+이전 대화 맥락을 참고해 판단하세요.
 출력 규칙: k8s 또는 question 중 하나만 출력하세요. 절대 다른 텍스트를 포함하지 마세요."""),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
         ])
-        result = (prompt | llm).invoke({"question": state["question"]})
+        result = (prompt | llm).invoke({"question": state["question"], "chat_history": state["chat_history"]})
         cleaned = result.content.lower().strip().strip(".,!? \n\t")
         intent = "k8s" if cleaned == "k8s" else "question"
         return {**state, "intent": intent}
@@ -38,14 +40,24 @@ def build_graph(retriever, llm, vectorstore=None):
     # ── 노드 2: k8s 명령 파싱 ────────────────────────────────────────
     def parse_k8s_command(state: GraphState) -> GraphState:
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """다음 명령에서 대상과 액션을 추출해 JSON으로만 답하세요.
-액션 종류: restart, stop, start, status, logs
-네임스페이스가 명시되지 않으면 namespace는 빈 문자열로.
+            ("system", """이전 대화 맥락을 참고해 현재 명령에서 액션·대상·네임스페이스를 추출해 JSON으로만 답하세요.
+액션 종류:
+- list: deployment 목록 조회 ("deployment 목록", "deployment 조회" 등)
+- status: pod 상태 확인 ("pod 상태 확인", "pod 목록" 등)
+- restart: deployment 재시작
+- stop: deployment 중지
+- start: deployment 시작
+- logs: 로그 조회
+네임스페이스 규칙:
+- 특정 네임스페이스가 명시된 경우: 해당 값 사용
+- "전체", "모든", "all" 네임스페이스를 의미하면: "all"
+- 언급이 없으면: 빈 문자열("")
 
 예시 출력: {{"action": "restart", "target": "nginx-demo", "namespace": ""}}"""),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
         ])
-        result = (prompt | llm).invoke({"question": state["question"]})
+        result = (prompt | llm).invoke({"question": state["question"], "chat_history": state["chat_history"]})
         try:
             raw = result.content.strip()
             # 코드블록 제거
@@ -87,11 +99,10 @@ def build_graph(retriever, llm, vectorstore=None):
                 result = scale_deployment(target, 1, ns)
             elif action == "logs":
                 result = get_logs(target, ns)
+            elif action == "list":
+                result = get_deployments(ns if ns else None)
             else:  # status
-                if target:
-                    result = get_pods(ns if ns else None)
-                else:
-                    result = get_deployments()
+                result = get_pods(ns if ns else None)
         except Exception as e:
             result = f"실행 중 오류: {e}"
 
@@ -101,10 +112,12 @@ def build_graph(retriever, llm, vectorstore=None):
     def check_relevance(state: GraphState) -> GraphState:
         check_prompt = ChatPromptTemplate.from_messages([
             ("system", """다음 질문이 MSP 운영(VM, Kubernetes, 네트워크, 보안, 모니터링, 장애처리 등 IT 운영)과
-관련 있는지 판단하세요. 반드시 'yes' 또는 'no' 중 하나만 영어로 답하세요."""),
+관련 있는지 판단하세요. 이전 대화 맥락을 참고해 판단하세요.
+반드시 'yes' 또는 'no' 중 하나만 영어로 답하세요."""),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
         ])
-        result = (check_prompt | llm).invoke({"question": state["question"]})
+        result = (check_prompt | llm).invoke({"question": state["question"], "chat_history": state["chat_history"]})
         content = result.content.lower().strip()
         relevant = "yes" if "yes" in content else "no"
         return {**state, "relevant": relevant}

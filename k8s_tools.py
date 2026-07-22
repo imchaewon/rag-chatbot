@@ -53,14 +53,20 @@ def _to_md_table(text: str) -> str:
 
 def get_deployments(namespace: str = None) -> str:
     args = ["get", "deployments"]
-    args += ["-A"] if namespace is None else ["-n", namespace]
+    if namespace == "all":
+        args += ["-A"]
+    elif namespace:
+        args += ["-n", namespace]
     out, err, rc = _run(args)
     return _to_md_table(out) if rc == 0 else f"오류: {err}"
 
 
 def get_pods(namespace: str = None) -> str:
     args = ["get", "pods"]
-    args += ["-A"] if namespace is None else ["-n", namespace]
+    if namespace == "all":
+        args += ["-A"]
+    elif namespace:
+        args += ["-n", namespace]
     out, err, rc = _run(args)
     return _to_md_table(out) if rc == 0 else f"오류: {err}"
 
