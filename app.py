@@ -387,7 +387,7 @@ async def chat_graph_stream(req: ChatRequest, user=Depends(get_current_user)):
                         yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
 
             if not req.preview and full_answer:
-                await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
+                await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer, "agent")
                 await asyncio.to_thread(set_session_owner, req.session_id, user["user_id"])
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
             if is_first and not req.preview and full_answer:

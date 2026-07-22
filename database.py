@@ -12,9 +12,14 @@ def init_db():
                 session_id TEXT    NOT NULL,
                 role       TEXT    NOT NULL,
                 content    TEXT    NOT NULL,
+                mode       TEXT    NOT NULL DEFAULT 'chat',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        try:
+            conn.execute("ALTER TABLE chat_history ADD COLUMN mode TEXT NOT NULL DEFAULT 'chat'")
+        except Exception:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS session_titles (
                 session_id TEXT PRIMARY KEY,
@@ -76,11 +81,11 @@ def get_history(session_id: str) -> list:
     return history
 
 
-def save_messages(session_id: str, question: str, answer: str):
+def save_messages(session_id: str, question: str, answer: str, mode: str = "chat"):
     with sqlite3.connect(DB_PATH) as conn:
         conn.executemany(
-            "INSERT INTO chat_history (session_id, role, content) VALUES (?, ?, ?)",
-            [(session_id, "human", question), (session_id, "ai", answer)],
+            "INSERT INTO chat_history (session_id, role, content, mode) VALUES (?, ?, ?, ?)",
+            [(session_id, "human", question, mode), (session_id, "ai", answer, mode)],
         )
 
 
@@ -264,6 +269,7 @@ def get_question_stats(limit: int = 20) -> list:
             FROM chat_history h1
             JOIN chat_history h2 ON h2.id = h1.id + 1 AND h2.role = 'ai'
             WHERE h1.role = 'human'
+              AND h1.mode = 'chat'
               AND h2.content NOT LIKE '%MSP 운영과 관련 없는 질문%'
               AND h2.content NOT LIKE '%매뉴얼에서 확인이 어렵습니다%'
             GROUP BY h1.content
