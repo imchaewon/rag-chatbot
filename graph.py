@@ -3,7 +3,7 @@ import warnings
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from k8s_tools import get_deployments, get_pods, restart_deployment, scale_deployment, get_logs, get_containers, find_deployment, find_pod
+from k8s_tools import get_deployments, get_pods, get_jobs, get_services, restart_deployment, scale_deployment, get_logs, get_containers, find_deployment, find_pod
 
 
 class GraphState(TypedDict):
@@ -44,6 +44,8 @@ def build_graph(retriever, llm, vectorstore=None):
 액션 종류:
 - list: deployment 목록 조회 ("deployment 목록", "deployment 조회" 등)
 - status: pod 상태 확인 ("pod 상태 확인", "pod 목록" 등)
+- jobs: job 목록 조회 ("job 목록", "job 조회" 등)
+- services: service 목록 조회 ("service 목록", "svc 조회" 등)
 - restart: deployment 재시작
 - stop: deployment 중지
 - start: deployment 시작
@@ -109,6 +111,10 @@ def build_graph(retriever, llm, vectorstore=None):
                 result = get_containers(target, ns or "default")
             elif action == "list":
                 result = get_deployments(ns if ns else None)
+            elif action == "jobs":
+                result = get_jobs(ns if ns else None)
+            elif action == "services":
+                result = get_services(ns if ns else None)
             else:  # status
                 result = get_pods(ns if ns else None)
         except Exception as e:
