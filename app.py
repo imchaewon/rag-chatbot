@@ -291,11 +291,11 @@ def chat_stream(req: ChatRequest, user=Depends(get_current_user)):
                         full_answer += token
                     yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
-            if not req.preview and sources:
+            if not req.preview and docs:
                 save_messages(req.session_id, req.question, full_answer)
                 set_session_owner(req.session_id, user["user_id"])
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
-            if is_first and not req.preview and sources:
+            if is_first and not req.preview and docs:
                 try:
                     save_session_title(req.session_id, generate_session_title(req.question, llm))
                 except Exception:
@@ -349,7 +349,6 @@ async def chat_graph_stream(req: ChatRequest, user=Depends(get_current_user)):
 
             full_answer = ""
             sources = []
-            is_k8s = False
 
             async for event in graph.astream_events(initial_state, version="v2"):
                 kind = event["event"]
@@ -367,22 +366,16 @@ async def chat_graph_stream(req: ChatRequest, user=Depends(get_current_user)):
                     if node == "retrieve_and_answer":
                         output = event["data"].get("output", {})
                         sources = [os.path.basename(s) for s in output.get("sources", []) if s]
-                    elif node == "execute_k8s":
-                        output = event["data"].get("output", {})
-                        full_answer = output.get("answer", "")
-                        is_k8s = True
-                        yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
-                    elif node == "reject":
+                    elif node in ("reject", "execute_k8s"):
                         output = event["data"].get("output", {})
                         full_answer = output.get("answer", "")
                         yield f"data: {json.dumps({'type': 'token', 'content': full_answer}, ensure_ascii=False)}\n\n"
 
-            should_save = sources or is_k8s
-            if not req.preview and should_save:
+            if not req.preview and full_answer:
                 await asyncio.to_thread(save_messages, req.session_id, req.question, full_answer)
                 await asyncio.to_thread(set_session_owner, req.session_id, user["user_id"])
             yield f"data: {json.dumps({'type': 'done', 'sources': sources}, ensure_ascii=False)}\n\n"
-            if is_first and not req.preview and should_save:
+            if is_first and not req.preview and full_answer:
                 try:
                     title = await asyncio.to_thread(generate_session_title, req.question, llm)
                     await asyncio.to_thread(save_session_title, req.session_id, title)
