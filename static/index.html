@@ -1419,7 +1419,7 @@
       } else {
         div = document.createElement("div");
         div.className = "message bot";
-        div.innerHTML = `<div class="bubble"><div class="thinking"><span></span><span></span><span></span></div></div><div class="time">${now()}</div>`;
+        div.innerHTML = `<div class="bubble"><div class="thinking"><span></span><span></span><span></span></div></div>`;
         messages.appendChild(div);
       }
       const bubble = div.querySelector(".bubble");
@@ -1472,6 +1472,12 @@
               autoScroll();
             } else if (data.type === "done") {
               bubble.innerHTML = marked.parse(fullText);
+              if (!existingDiv) {
+                const t = document.createElement("div");
+                t.className = "time";
+                t.textContent = now();
+                div.appendChild(t);
+              }
               if (data.sources && data.sources.length > 0) {
                 const sourcesEl = document.createElement("div");
                 sourcesEl.className = "sources";
