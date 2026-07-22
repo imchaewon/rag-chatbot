@@ -1731,11 +1731,12 @@ function autoScroll() {
 
 ---
 
-## LangGraph k8s 제어 모드
+## 에이전트 모드 (LangGraph k8s 제어)
 
 ### 배경
 
 관련성 판단(`check_relevance`)은 SOURCE_SCORE_THRESHOLD 임계치 필터로 대체했으므로, LangGraph 모드를 k8s 클러스터 직접 제어 기능으로 재활용.
+UI 체크박스 명칭은 "LangGraph 모드" → **"에이전트 모드"** 로 변경. 나중에 k8s 외 다른 시스템 제어가 추가되어도 이름이 자연스럽게 유지됨.
 
 "nginx 재시작해줘" 같은 자연어 명령을 받아 kubectl을 실행하고 결과를 답변으로 돌려줌.
 
@@ -1778,6 +1779,30 @@ class GraphState(TypedDict):
     k8s_target: str    # 대상 deployment 이름
     k8s_namespace: str # 네임스페이스 (빈 문자열이면 자동 탐색)
 ```
+
+### 추천 질문 분리
+
+에이전트 모드와 일반 모드의 추천 질문을 분리. 체크박스 토글 시 즉시 전환.
+
+| 모드 | 추천 질문 |
+|---|---|
+| 일반 모드 | `/suggestions` API (통계 기반 + 사전 정의) |
+| 에이전트 모드 | 하드코딩된 k8s 명령 패턴 (통계 의미 없음) |
+
+```javascript
+const AGENT_SUGGESTIONS = [
+    "deployment 목록 보여줘",
+    "pod 상태 확인해줘",
+    "nginx-demo 재시작해줘",
+    "nginx-demo 로그 확인해줘",
+    "nginx-demo 중지해줘",
+];
+
+document.getElementById("graphMode").addEventListener("change", loadSuggestions);
+```
+
+k8s 명령은 대상(nginx, redis 등)이 환경마다 달라 통계 기반 추천이 의미 없으므로 액션 패턴만 하드코딩.
+에이전트 모드로 입력된 k8s 명령은 DB에 저장하지 않으므로 일반 모드 추천에도 섞이지 않음.
 
 ### 데모 환경
 
