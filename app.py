@@ -647,3 +647,8 @@ def delete_document(filename: str, user=Depends(get_current_user)):
         os.remove(file_path)
 
     return {"message": f"'{filename}' 삭제 완료", "chunks_removed": len(ids_to_delete)}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
